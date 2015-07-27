@@ -1,0 +1,13 @@
+---
+features:
+  - |
+    Added portgroup API support. API version was bumped to 1.17. The following
+    new endpoints are added:
+    - /nodes/<node_ident>/portgroups
+    - /portgroups
+    - /portgroups/<portgroup_ident>
+    - /portgroups/<portgroup_ident>/ports
+    Starting with this API version, ports have three new fields:
+    - portgroup_uuid contains UUID of a portgroup this port belongs to;
+    - pxe_enabled indicates whether pxe is enabled or disabled on the node;
+    - local_link_connection contains the port binding profile.

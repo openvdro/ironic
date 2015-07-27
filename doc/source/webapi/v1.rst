@@ -32,7 +32,17 @@ always requests the newest supported API version.
 API Versions History
 --------------------
 
+**1.17**
+
+    This API version adds the portgroup support:
+
+    * '/v1/nodes/<node>/portgroups'
+    * '/v1/portgroups/'
+
+    Add node ``portgroup`` fields.
+
 **1.16**
+
     Add ability to filter nodes by driver.
 
 **1.15**
@@ -244,4 +254,17 @@ Ports
    :members:
 
 .. autotype:: ironic.api.controllers.v1.port.Port
+   :members:
+
+
+Portgroups
+==========
+
+.. rest-controller:: ironic.api.controllers.v1.portgroup:PortgroupsController
+   :webprefix: /v1/portgroups
+
+.. autotype:: ironic.api.controllers.v1.portgroup.PortgroupCollection
+   :members:
+
+.. autotype:: ironic.api.controllers.v1.portgroup.Portgroup
    :members:

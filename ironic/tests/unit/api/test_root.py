@@ -37,8 +37,12 @@ class TestRoot(base.BaseApiTest):
 
 class TestV1Root(base.BaseApiTest):
 
-    def test_get_v1_root(self):
-        data = self.get_json('/')
+    def _test_get_root(self, headers=None, additional_expected_resources=None):
+        if not headers:
+            headers = {}
+        if not additional_expected_resources:
+            additional_expected_resources = []
+        data = self.get_json('/', headers=headers)
         self.assertEqual('v1', data['id'])
         # Check fields are not empty
         for f in data.keys():
@@ -46,8 +50,16 @@ class TestV1Root(base.BaseApiTest):
         # Check if all known resources are present and there are no extra ones.
         not_resources = ('id', 'links', 'media_types')
         actual_resources = tuple(set(data.keys()) - set(not_resources))
-        expected_resources = ('chassis', 'drivers', 'nodes', 'ports')
+        expected_resources = (['chassis', 'drivers', 'nodes', 'ports'] +
+                              additional_expected_resources)
         self.assertEqual(sorted(expected_resources), sorted(actual_resources))
 
         self.assertIn({'type': 'application/vnd.openstack.ironic.v1+json',
                        'base': 'application/json'}, data['media_types'])
+
+    def test_get_v1_root(self):
+        self._test_get_root()
+
+    def test_get_v1_16_root(self):
+        self._test_get_root(headers={'X-OpenStack-Ironic-API-Version': '1.17'},
+                            additional_expected_resources=['portgroups'])
