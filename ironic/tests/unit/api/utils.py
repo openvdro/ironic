@@ -22,6 +22,7 @@ import json
 from ironic.api.controllers.v1 import chassis as chassis_controller
 from ironic.api.controllers.v1 import node as node_controller
 from ironic.api.controllers.v1 import port as port_controller
+from ironic.api.controllers.v1 import portgroup as portgroup_controller
 from ironic.tests.unit.db import utils
 
 ADMIN_TOKEN = '4562138218392831'
@@ -103,9 +104,6 @@ def port_post_data(**kw):
     port = utils.get_test_port(**kw)
     # node_id is not part of the API object
     port.pop('node_id')
-    # TODO(vsaienko): remove when API part is added
-    port.pop('local_link_connection')
-    port.pop('pxe_enabled')
     # portgroup_id is not part of the API object
     port.pop('portgroup_id')
     internal = port_controller.PortPatchType.internal_attrs()
@@ -125,3 +123,17 @@ def post_get_test_node(**kw):
     chassis = utils.get_test_chassis()
     node['chassis_uuid'] = kw.get('chassis_uuid', chassis['uuid'])
     return node
+
+
+def portgroup_post_data(**kw):
+    portgroup = utils.get_test_portgroup(**kw)
+    portgroup.pop('node_id')
+    internal = portgroup_controller.PortgroupPatchType.internal_attrs()
+    return remove_internal(portgroup, internal)
+
+
+def post_get_test_portgroup(**kw):
+    portgroup = portgroup_post_data(**kw)
+    node = utils.get_test_node()
+    portgroup['node_uuid'] = kw.get('node_uuid', node['uuid'])
+    return portgroup

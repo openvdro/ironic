@@ -1,0 +1,9 @@
+---
+features:
+  - |
+    Added portgroup API support. API version was bumped to 1.16. The following
+    new endpoints are added:
+    - /nodes/<node_ident>/portgroups
+    - /portgroups
+    - /portgroups/<portgroup_ident>
+    - /portgroups/<portgroup_ident>/ports

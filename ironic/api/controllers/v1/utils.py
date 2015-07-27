@@ -101,6 +101,29 @@ def get_rpc_node(node_ident):
     raise exception.NodeNotFound(node=node_ident)
 
 
+def get_rpc_portgroup(portgroup_ident):
+    """Get the RPC portgroup from the portgroup uuid or logical name.
+
+    :param portgroup_ident: the UUID or logical name of a portgroup.
+
+    :returns: The RPC portgroup.
+    :raises: InvalidUuidOrName if the name or uuid provided is not valid.
+    :raises: PortgroupNotFound if the portgroup is not found.
+    """
+    # Check to see if the portgroup_ident is a valid UUID.  If it is, treat it
+    # as a UUID.
+    if uuidutils.is_uuid_like(portgroup_ident):
+        return objects.Portgroup.get_by_uuid(pecan.request.context,
+                                             portgroup_ident)
+
+    # We can refer to portgroups by their name
+    if utils.is_valid_logical_name(portgroup_ident):
+        return objects.Portgroup.get_by_name(pecan.request.context,
+                                             portgroup_ident)
+    else:
+        raise exception.InvalidUuidOrName(name=portgroup_ident)
+
+
 def is_valid_node_name(name):
     """Determine if the provided name is a valid node name.
 
@@ -241,3 +264,12 @@ def allow_links_node_states_and_driver_properties():
     """
     return (pecan.request.version.minor >=
             versions.MINOR_14_LINKS_NODESTATES_DRIVERPROPERTIES)
+
+
+def allow_portgroups():
+    """Check if we should return portgroup info.
+
+    Version 1.16 of the API added support for PortGroups.
+    """
+    return (pecan.request.version.minor >=
+            versions.MINOR_16_PORTGROUP)

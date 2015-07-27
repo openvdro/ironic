@@ -1,0 +1,6 @@
+---
+upgrade:
+  - |
+    The BaseDHCP.update_dhcp_opts() vifs parameter was changed to:
+    ``{'ports': {'port.uuid': vif.id}, 'portgroups': {'portgroup.uuid': vif.id}}``.
+    This is a breaking change for out-of-tree DHCP providers.
