@@ -30,6 +30,7 @@ from ironic.api.controllers import base
 from ironic.api.controllers import link
 from ironic.api.controllers.v1 import collection
 from ironic.api.controllers.v1 import port
+from ironic.api.controllers.v1 import portgroup
 from ironic.api.controllers.v1 import types
 from ironic.api.controllers.v1 import utils as api_utils
 from ironic.api.controllers.v1 import versions
@@ -697,6 +698,9 @@ class Node(base.APIBase):
     ports = wsme.wsattr([link.Link], readonly=True)
     """Links to the collection of ports on this node"""
 
+    portgroups = wsme.wsattr([link.Link], readonly=True)
+    """Links to the collection of portgroups on this node"""
+
     states = wsme.wsattr([link.Link], readonly=True)
     """Links to endpoint for retrieving and setting node states"""
 
@@ -724,7 +728,7 @@ class Node(base.APIBase):
 
     @staticmethod
     def _convert_with_links(node, url, fields=None, show_password=True,
-                            show_states_links=True):
+                            show_states_links=True, show_portgroups=True):
         # NOTE(lucasagomes): Since we are able to return a specified set of
         # fields the "uuid" can be unset, so we need to save it in another
         # variable to use when building the links
@@ -744,6 +748,13 @@ class Node(base.APIBase):
                                link.Link.make_link('bookmark', url, 'nodes',
                                                    node_uuid + "/states",
                                                    bookmark=True)]
+            if show_portgroups:
+                node.portgroups = [
+                    link.Link.make_link('self', url, 'nodes',
+                                        node_uuid + "/portgroups"),
+                    link.Link.make_link('bookmark', url, 'nodes',
+                                        node_uuid + "/portgroups",
+                                        bookmark=True)]
 
         if not show_password and node.driver_info != wtypes.Unset:
             node.driver_info = ast.literal_eval(strutils.mask_password(
@@ -773,10 +784,12 @@ class Node(base.APIBase):
         show_password = pecan.request.context.show_password
         show_states_links = (
             api_utils.allow_links_node_states_and_driver_properties())
+        show_portgroups = api_utils.allow_portgroups()
         return cls._convert_with_links(node, pecan.request.public_url,
                                        fields=fields,
                                        show_password=show_password,
-                                       show_states_links=show_states_links)
+                                       show_states_links=show_states_links,
+                                       show_portgroups=show_portgroups)
 
     @classmethod
     def sample(cls, expand=True):
@@ -949,6 +962,9 @@ class NodesController(rest.RestController):
     ports = port.PortsController()
     """Expose ports as a sub-element of nodes"""
 
+    portgroups = portgroup.PortgroupsController()
+    """Expose portgroups as a sub-element of nodes"""
+
     management = NodeManagementController()
     """Expose management as a sub-element of nodes"""
 
@@ -958,6 +974,10 @@ class NodesController(rest.RestController):
     # Set the flag to indicate that the requests to this resource are
     # coming from a top-level resource
     ports.from_nodes = True
+
+    # Set the flag to indicate that the requests to this resource are
+    # coming from a top-level resource
+    portgroups.from_nodes = True
 
     from_chassis = False
     """A flag to indicate if the requests to this controller are coming
