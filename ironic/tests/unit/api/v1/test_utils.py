@@ -174,6 +174,13 @@ class TestApiUtils(base.TestCase):
         mock_request.version.minor = 10
         self.assertFalse(utils.allow_links_node_states_and_driver_properties())
 
+    @mock.patch.object(pecan, 'request', spec_set=['version'])
+    def test_allow_portgroups(self, mock_request):
+        mock_request.version.minor = 17
+        self.assertTrue(utils.allow_portgroups())
+        mock_request.version.minor = 16
+        self.assertFalse(utils.allow_portgroups())
+
 
 class TestNodeIdent(base.TestCase):
 
@@ -349,3 +356,39 @@ class TestVendorPassthru(base.TestCase):
 
     def test_vendor_passthru_attach_byte_to_byte(self):
         self._test_vendor_passthru_attach(b'\x00\x01', b'\x00\x01')
+
+
+class TestPortgroupIdent(base.TestCase):
+    def setUp(self):
+        super(TestPortgroupIdent, self).setUp()
+        self.valid_name = 'my-portgroup'
+        self.valid_uuid = uuidutils.generate_uuid()
+        self.invalid_name = 'My Portgroup'
+        self.portgroup = test_api_utils.post_get_test_portgroup()
+
+    @mock.patch.object(pecan, 'request')
+    @mock.patch.object(objects.Portgroup, 'get_by_name')
+    def test_get_rpc_portgroup_name(self, mock_gbn, mock_pr):
+        mock_pr.version.minor = 10
+        self.portgroup['name'] = self.valid_name
+        mock_gbn.return_value = self.portgroup
+        self.assertEqual(self.portgroup, utils.get_rpc_portgroup(
+            self.valid_name))
+        self.assertEqual(1, mock_gbn.call_count)
+
+    @mock.patch.object(pecan, 'request')
+    @mock.patch.object(objects.Portgroup, 'get_by_uuid')
+    def test_get_rpc_portgroup_uuid(self, mock_gbu, mock_pr):
+        mock_pr.version.minor = 10
+        self.portgroup['uuid'] = self.valid_uuid
+        mock_gbu.return_value = self.portgroup
+        self.assertEqual(self.portgroup, utils.get_rpc_portgroup(
+            self.valid_uuid))
+        self.assertEqual(1, mock_gbu.call_count)
+
+    @mock.patch.object(pecan, 'request')
+    def test_get_rpc_portgroup_invalid_name(self, mock_pr):
+        mock_pr.version.minor = 10
+        self.assertRaises(exception.InvalidUuidOrName,
+                          utils.get_rpc_portgroup,
+                          self.invalid_name)
