@@ -588,7 +588,7 @@ class TestBaseAgentVendor(db_base.DbTestCase):
             power_off_mock.assert_called_once_with(task.node)
             self.assertEqual(2, get_power_state_mock.call_count)
             node_power_action_mock.assert_called_once_with(
-                task, states.REBOOT)
+                task, states.POWER_ON)
             self.assertEqual(states.ACTIVE, task.node.provision_state)
             self.assertEqual(states.NOSTATE, task.node.target_provision_state)
 
@@ -598,8 +598,13 @@ class TestBaseAgentVendor(db_base.DbTestCase):
                        spec=types.FunctionType)
     @mock.patch.object(agent_client.AgentClient, 'power_off',
                        spec=types.FunctionType)
+    @mock.patch('ironic.drivers.modules.network.flat.FlatNetwork.'
+                'remove_provisioning_network', spec_set=True, autospec=True)
+    @mock.patch('ironic.drivers.modules.network.flat.FlatNetwork.'
+                'configure_tenant_networks', spec_set=True, autospec=True)
     def test_reboot_and_finish_deploy_soft_poweroff_doesnt_complete(
-            self, power_off_mock, get_power_state_mock,
+            self, remove_provisioning_net_mock, configure_tenant_net_mock,
+            power_off_mock, get_power_state_mock,
             node_power_action_mock):
         self.node.provision_state = states.DEPLOYING
         self.node.target_provision_state = states.ACTIVE
@@ -610,16 +615,25 @@ class TestBaseAgentVendor(db_base.DbTestCase):
             self.passthru.reboot_and_finish_deploy(task)
             power_off_mock.assert_called_once_with(task.node)
             self.assertEqual(7, get_power_state_mock.call_count)
-            node_power_action_mock.assert_called_once_with(
-                task, states.REBOOT)
+            node_power_action_mock.assert_has_calls([
+                mock.call(task, states.POWER_OFF),
+                mock.call(task, states.POWER_ON)])
+            remove_provisioning_net_mock.assert_called_once_with(mock.ANY,
+                                                                 task)
+            configure_tenant_net_mock.assert_called_once_with(mock.ANY, task)
             self.assertEqual(states.ACTIVE, task.node.provision_state)
             self.assertEqual(states.NOSTATE, task.node.target_provision_state)
 
     @mock.patch.object(manager_utils, 'node_power_action', autospec=True)
     @mock.patch.object(agent_client.AgentClient, 'power_off',
                        spec=types.FunctionType)
+    @mock.patch('ironic.drivers.modules.network.flat.FlatNetwork.'
+                'remove_provisioning_network', spec_set=True, autospec=True)
+    @mock.patch('ironic.drivers.modules.network.flat.FlatNetwork.'
+                'configure_tenant_networks', spec_set=True, autospec=True)
     def test_reboot_and_finish_deploy_soft_poweroff_fails(
-            self, power_off_mock, node_power_action_mock):
+            self, remove_provisioning_net_mock, configure_tenant_net_mock,
+            power_off_mock, node_power_action_mock):
         power_off_mock.side_effect = iter([RuntimeError("boom")])
         self.node.provision_state = states.DEPLOYING
         self.node.target_provision_state = states.ACTIVE
@@ -628,8 +642,12 @@ class TestBaseAgentVendor(db_base.DbTestCase):
                                   shared=True) as task:
             self.passthru.reboot_and_finish_deploy(task)
             power_off_mock.assert_called_once_with(task.node)
-            node_power_action_mock.assert_called_once_with(
-                task, states.REBOOT)
+            node_power_action_mock.assert_has_calls([
+                mock.call(task, states.POWER_OFF),
+                mock.call(task, states.POWER_ON)])
+            remove_provisioning_net_mock.assert_called_once_with(mock.ANY,
+                                                                 task)
+            configure_tenant_net_mock.assert_called_once_with(mock.ANY, task)
             self.assertEqual(states.ACTIVE, task.node.provision_state)
             self.assertEqual(states.NOSTATE, task.node.target_provision_state)
 
@@ -639,9 +657,13 @@ class TestBaseAgentVendor(db_base.DbTestCase):
                        spec=types.FunctionType)
     @mock.patch.object(agent_client.AgentClient, 'power_off',
                        spec=types.FunctionType)
+    @mock.patch('ironic.drivers.modules.network.flat.FlatNetwork.'
+                'remove_provisioning_network', spec_set=True, autospec=True)
+    @mock.patch('ironic.drivers.modules.network.flat.FlatNetwork.'
+                'configure_tenant_networks', spec_set=True, autospec=True)
     def test_reboot_and_finish_deploy_get_power_state_fails(
-            self, power_off_mock, get_power_state_mock,
-            node_power_action_mock):
+            self, remove_provisioning_net_mock, configure_tenant_net_mock,
+            power_off_mock, get_power_state_mock, node_power_action_mock):
         self.node.provision_state = states.DEPLOYING
         self.node.target_provision_state = states.ACTIVE
         self.node.save()
@@ -651,8 +673,12 @@ class TestBaseAgentVendor(db_base.DbTestCase):
             self.passthru.reboot_and_finish_deploy(task)
             power_off_mock.assert_called_once_with(task.node)
             self.assertEqual(7, get_power_state_mock.call_count)
-            node_power_action_mock.assert_called_once_with(
-                task, states.REBOOT)
+            node_power_action_mock.assert_has_calls([
+                mock.call(task, states.POWER_OFF),
+                mock.call(task, states.POWER_ON)])
+            remove_provisioning_net_mock.assert_called_once_with(mock.ANY,
+                                                                 task)
+            configure_tenant_net_mock.assert_called_once_with(mock.ANY, task)
             self.assertEqual(states.ACTIVE, task.node.provision_state)
             self.assertEqual(states.NOSTATE, task.node.target_provision_state)
 
@@ -678,7 +704,6 @@ class TestBaseAgentVendor(db_base.DbTestCase):
             power_off_mock.assert_called_once_with(task.node)
             self.assertEqual(7, get_power_state_mock.call_count)
             node_power_action_mock.assert_has_calls([
-                mock.call(task, states.REBOOT),
                 mock.call(task, states.POWER_OFF)])
             self.assertEqual(states.DEPLOYFAIL, task.node.provision_state)
             self.assertEqual(states.ACTIVE, task.node.target_provision_state)

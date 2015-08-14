@@ -859,56 +859,6 @@ class IscsiDeployMethodsTestCase(db_base.DbTestCase):
                               task, kwargs)
             set_fail_state_mock.assert_called_once_with(task, mock.ANY)
 
-    @mock.patch.object(deploy_utils, 'notify_ramdisk_to_proceed',
-                       autospec=True)
-    def test_finish_deploy(self, notify_mock):
-        self.node.provision_state = states.DEPLOYING
-        self.node.target_provision_state = states.ACTIVE
-        self.node.save()
-        with task_manager.acquire(self.context, self.node.uuid,
-                                  shared=False) as task:
-            iscsi_deploy.finish_deploy(task, '1.2.3.4')
-            notify_mock.assert_called_once_with('1.2.3.4')
-            self.assertEqual(states.ACTIVE, task.node.provision_state)
-            self.assertEqual(states.NOSTATE, task.node.target_provision_state)
-
-    @mock.patch.object(deploy_utils, 'set_failed_state', autospec=True)
-    @mock.patch.object(deploy_utils, 'notify_ramdisk_to_proceed',
-                       autospec=True)
-    def test_finish_deploy_notify_fails(self, notify_mock,
-                                        set_fail_state_mock):
-        with task_manager.acquire(self.context, self.node.uuid,
-                                  shared=False) as task:
-            notify_mock.side_effect = RuntimeError()
-            self.assertRaises(exception.InstanceDeployFailure,
-                              iscsi_deploy.finish_deploy, task, '1.2.3.4')
-            set_fail_state_mock.assert_called_once_with(task, mock.ANY)
-
-    @mock.patch.object(manager_utils, 'node_power_action', autospec=True)
-    @mock.patch.object(deploy_utils, 'notify_ramdisk_to_proceed',
-                       autospec=True)
-    def test_finish_deploy_ssh_with_local_boot(self, notify_mock,
-                                               node_power_mock):
-        instance_info = dict(INST_INFO_DICT)
-        instance_info['capabilities'] = {'boot_option': 'local'}
-        n = {
-            'uuid': uuidutils.generate_uuid(),
-            'driver': 'fake_ssh',
-            'instance_info': instance_info,
-            'provision_state': states.DEPLOYING,
-            'target_provision_state': states.ACTIVE,
-        }
-        mgr_utils.mock_the_extension_manager(driver="fake_ssh")
-        node = obj_utils.create_test_node(self.context, **n)
-
-        with task_manager.acquire(self.context, node.uuid,
-                                  shared=False) as task:
-            iscsi_deploy.finish_deploy(task, '1.2.3.4')
-            notify_mock.assert_called_once_with('1.2.3.4')
-            self.assertEqual(states.ACTIVE, task.node.provision_state)
-            self.assertEqual(states.NOSTATE, task.node.target_provision_state)
-            node_power_mock.assert_called_once_with(task, states.REBOOT)
-
     @mock.patch.object(keystone, 'get_service_url', autospec=True)
     def test_validate_good_api_url_from_config_file(self, mock_ks):
         # not present in the keystone catalog
@@ -990,28 +940,33 @@ class ISCSIDeployTestCase(db_base.DbTestCase):
             validate_capabilities_mock.assert_called_once_with(task.node)
             validate_mock.assert_called_once_with(task)
 
+    @mock.patch('ironic.drivers.modules.network.flat.FlatNetwork.'
+                'add_provisioning_network', spec_set=True, autospec=True)
     @mock.patch.object(pxe.PXEBoot, 'prepare_instance', autospec=True)
-    def test_prepare_node_active(self, prepare_instance_mock):
-        with task_manager.acquire(self.context, self.node.uuid,
-                                  shared=True) as task:
+    def test_prepare_node_active(self, prepare_instance_mock,
+                                 add_provisioning_net_mock):
+        with task_manager.acquire(self.context, self.node.uuid) as task:
             task.node.provision_state = states.ACTIVE
 
             task.driver.deploy.prepare(task)
 
             prepare_instance_mock.assert_called_once_with(
                 task.driver.boot, task)
+            self.assertEqual(0, add_provisioning_net_mock.call_count)
 
     @mock.patch.object(deploy_utils, 'build_agent_options', autospec=True)
     @mock.patch.object(iscsi_deploy, 'build_deploy_ramdisk_options',
                        autospec=True)
     @mock.patch.object(pxe.PXEBoot, 'prepare_ramdisk', autospec=True)
-    def test_prepare_node_deploying(self, mock_prepare_ramdisk,
+    @mock.patch('ironic.drivers.modules.network.flat.FlatNetwork.'
+                'add_provisioning_network', spec_set=True, autospec=True)
+    def test_prepare_node_deploying(self, add_provisioning_net_mock,
+                                    mock_prepare_ramdisk,
                                     mock_iscsi_options, mock_agent_options):
         mock_iscsi_options.return_value = {'a': 'b'}
         mock_agent_options.return_value = {'c': 'd'}
-        with task_manager.acquire(self.context, self.node.uuid,
-                                  shared=True) as task:
-            task.node.provision_state = states.DEPLOYWAIT
+        with task_manager.acquire(self.context, self.node.uuid) as task:
+            task.node.provision_state = states.DEPLOYING
 
             task.driver.deploy.prepare(task)
 
@@ -1019,6 +974,7 @@ class ISCSIDeployTestCase(db_base.DbTestCase):
             mock_agent_options.assert_called_once_with(task.node)
             mock_prepare_ramdisk.assert_called_once_with(
                 task.driver.boot, task, {'a': 'b', 'c': 'd'})
+            add_provisioning_net_mock.assert_called_once_with(mock.ANY, task)
 
     @mock.patch.object(manager_utils, 'node_power_action', autospec=True)
     @mock.patch.object(iscsi_deploy, 'check_image_size', autospec=True)
@@ -1034,14 +990,19 @@ class ISCSIDeployTestCase(db_base.DbTestCase):
             mock_check_image_size.assert_called_once_with(task)
             mock_node_power_action.assert_called_once_with(task, states.REBOOT)
 
+    @mock.patch('ironic.drivers.modules.network.flat.FlatNetwork.'
+                'unconfigure_tenant_networks', autospec=True)
     @mock.patch.object(manager_utils, 'node_power_action', autospec=True)
-    def test_tear_down(self, node_power_action_mock):
+    def test_tear_down(self, node_power_action_mock,
+                       unconfigure_tenant_nets_mock):
         with task_manager.acquire(self.context,
                                   self.node.uuid, shared=False) as task:
             state = task.driver.deploy.tear_down(task)
             self.assertEqual(state, states.DELETED)
             node_power_action_mock.assert_called_once_with(task,
                                                            states.POWER_OFF)
+            unconfigure_tenant_nets_mock.assert_called_once_with(mock.ANY,
+                                                                 task)
 
     @mock.patch('ironic.common.dhcp_factory.DHCPFactory._set_dhcp_provider')
     @mock.patch('ironic.common.dhcp_factory.DHCPFactory.clean_dhcp')
@@ -1366,8 +1327,9 @@ class TestVendorPassthru(db_base.DbTestCase):
 
     @mock.patch.object(iscsi_deploy, 'validate_bootloader_install_status',
                        autospec=True)
-    @mock.patch.object(iscsi_deploy, 'finish_deploy', autospec=True)
-    def test_pass_bootloader_install_info(self, finish_deploy_mock,
+    @mock.patch.object(deploy_utils, 'notify_ramdisk_to_proceed',
+                       autospec=True)
+    def test_pass_bootloader_install_info(self, notify_mock,
                                           validate_input_mock):
         kwargs = {'method': 'pass_deploy_info', 'address': '123456'}
         self.node.provision_state = states.DEPLOYWAIT
@@ -1376,7 +1338,7 @@ class TestVendorPassthru(db_base.DbTestCase):
         with task_manager.acquire(self.context, self.node.uuid,
                                   shared=False) as task:
             task.driver.vendor.pass_bootloader_install_info(task, **kwargs)
-            finish_deploy_mock.assert_called_once_with(task, '123456')
+            notify_mock.assert_called_once_with('123456')
             validate_input_mock.assert_called_once_with(task, kwargs)
 
     @mock.patch.object(agent_base_vendor.BaseAgentVendor,
@@ -1441,6 +1403,61 @@ class TestVendorPassthru(db_base.DbTestCase):
             efi_system_part_uuid='efi-part-uuid')
         reboot_and_finish_deploy_mock.assert_called_once_with(
             self.task.driver.vendor, self.task)
+
+    @mock.patch.object(deploy_utils, 'notify_ramdisk_to_proceed',
+                       autospec=True)
+    def test_bash_finish_deploy(self, notify_mock):
+        self.node.provision_state = states.DEPLOYING
+        self.node.target_provision_state = states.ACTIVE
+        self.node.save()
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            task.driver.vendor.bash_finish_deploy(task, '1.2.3.4')
+            notify_mock.assert_called_once_with('1.2.3.4')
+            self.assertEqual(states.ACTIVE, task.node.provision_state)
+            self.assertEqual(states.NOSTATE, task.node.target_provision_state)
+
+    @mock.patch.object(deploy_utils, 'set_failed_state', autospec=True)
+    @mock.patch.object(deploy_utils, 'notify_ramdisk_to_proceed',
+                       autospec=True)
+    def test_bash_finish_deploy_notify_fails(self, notify_mock,
+                                             set_fail_state_mock):
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            notify_mock.side_effect = RuntimeError()
+            self.assertRaises(
+                exception.InstanceDeployFailure,
+                task.driver.vendor.bash_finish_deploy, task, '1.2.3.4')
+            set_fail_state_mock.assert_called_once_with(task, mock.ANY)
+
+    @mock.patch.object(manager_utils, 'node_power_action', autospec=True)
+    @mock.patch.object(deploy_utils, 'notify_ramdisk_to_proceed',
+                       autospec=True)
+    def test_bash_finish_deploy_ssh_with_local_boot(self, notify_mock,
+                                                    node_power_mock):
+        instance_info = dict(INST_INFO_DICT)
+        instance_info['capabilities'] = {'boot_option': 'local'}
+        n = {
+            'uuid': uuidutils.generate_uuid(),
+            'driver': 'fake_ssh',
+            'instance_info': instance_info,
+            'provision_state': states.DEPLOYING,
+            'target_provision_state': states.ACTIVE,
+        }
+        mgr_utils.mock_the_extension_manager(driver="fake_ssh")
+        node = obj_utils.create_test_node(self.context, **n)
+
+        with task_manager.acquire(self.context, node.uuid,
+                                  shared=False,
+                                  driver_name="fake_ssh") as task:
+            task.driver.vendor = iscsi_deploy.VendorPassthru()
+            task.driver.vendor.bash_finish_deploy(task, '1.2.3.4')
+            notify_mock.assert_called_once_with('1.2.3.4')
+            self.assertEqual(states.ACTIVE, task.node.provision_state)
+            self.assertEqual(states.NOSTATE, task.node.target_provision_state)
+            node_power_mock.assert_has_calls([
+                mock.call(task, states.POWER_OFF),
+                mock.call(task, states.POWER_ON)])
 
 
 # Cleanup of iscsi_deploy with pxe boot interface
