@@ -31,6 +31,7 @@ from ironic.common.i18n import _LE
 from ironic.common.i18n import _LI
 from ironic.common.i18n import _LW
 from ironic.common import keystone
+from ironic.common import network
 from ironic.common import states
 from ironic.common import utils
 from ironic.conductor import task_manager
@@ -611,6 +612,7 @@ def validate_bootloader_install_status(task, input_params):
     LOG.info(_LI('Bootloader successfully installed on node %s'), node.uuid)
 
 
+@task_manager.require_exclusive_lock
 def finish_deploy(task, address):
     """Notifies the ramdisk to reboot the node and makes the instance active.
 
@@ -633,15 +635,18 @@ def finish_deploy(task, address):
         deploy_utils.set_failed_state(task, msg)
         raise exception.InstanceDeployFailure(msg)
 
-    # TODO(lucasagomes): When deploying a node with the DIB ramdisk
-    # Ironic will not power control the node at the end of the deployment,
-    # it's the DIB ramdisk that reboots the node. But, for the SSH driver
-    # some changes like setting the boot device only gets applied when the
-    # machine is powered off and on again. So the code below is enforcing
-    # it. For Liberty we need to change the DIB ramdisk so that Ironic
-    # always controls the power state of the node for all drivers.
-    if deploy_utils.get_boot_option(node) == "local" and 'ssh' in node.driver:
-        manager_utils.node_power_action(task, states.REBOOT)
+    # NOTE(Siva): When deploying a node on provision network node's port
+    # should be plugged to tenant network before booting the node. It is
+    # needed to ensure that node recieve IP address from tenant network.
+    # Also for SSH driver some changes like setting the boot device only
+    # gets applied when the machine is powered off and on again.
+    manager_utils.node_power_action(task, states.POWER_OFF)
+
+    provider = network.get_network_provider(task.node.network_provider)
+    provider.remove_provisioning_network(task)
+    provider.configure_tenant_networks(task)
+
+    manager_utils.node_power_action(task, states.POWER_ON)
 
     LOG.info(_LI('Deployment to node %s done'), node.uuid)
     task.process_event('done')
@@ -704,8 +709,11 @@ class ISCSIDeploy(base.DeployInterface):
         :returns: deploy state DELETED.
         """
         manager_utils.node_power_action(task, states.POWER_OFF)
+        provider = network.get_network_provider(task.node.network_provider)
+        provider.unconfigure_tenant_networks(task)
         return states.DELETED
 
+    @task_manager.require_exclusive_lock
     def prepare(self, task):
         """Prepare the deployment environment for this task's node.
 
@@ -719,6 +727,14 @@ class ISCSIDeploy(base.DeployInterface):
         if node.provision_state == states.ACTIVE:
             task.driver.boot.prepare_instance(task)
         else:
+            if node.provision_state == states.DEPLOYING:
+                # Adding the node to provisioning network so that the dhcp
+                # options get added for the provisioning port.
+                manager_utils.node_power_action(task, states.POWER_OFF)
+                provider = network.get_network_provider(
+                    task.node.network_provider)
+                provider.add_provisioning_network(task)
+
             deploy_opts = build_deploy_ramdisk_options(node)
 
             # NOTE(lucasagomes): We are going to extend the normal PXE config
