@@ -312,6 +312,9 @@ class AgentDeploy(base.DeployInterface):
         :returns: status of the deploy. One of ironic.common.states.
         """
         manager_utils.node_power_action(task, states.POWER_OFF)
+
+        task.driver.network.unconfigure_tenant_networks(task)
+
         return states.DELETED
 
     @task_manager.require_exclusive_lock
@@ -325,6 +328,12 @@ class AgentDeploy(base.DeployInterface):
         # take over.
         node = task.node
         if node.provision_state != states.ACTIVE:
+            if node.provision_state == states.DEPLOYING:
+                # Adding the node to provisioning network so that the dhcp
+                # options get added for the provisioning port.
+                manager_utils.node_power_action(task, states.POWER_OFF)
+                task.driver.network.add_provisioning_network(task)
+
             node.instance_info = build_instance_info_for_deploy(task)
             node.save()
             if CONF.agent.manage_agent_boot:

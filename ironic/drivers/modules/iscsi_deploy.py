@@ -506,42 +506,6 @@ def validate_bootloader_install_status(task, input_params):
     LOG.info(_LI('Bootloader successfully installed on node %s'), node.uuid)
 
 
-def finish_deploy(task, address):
-    """Notifies the ramdisk to reboot the node and makes the instance active.
-
-    This method notifies the ramdisk to proceed to reboot and then
-    makes the instance active.
-
-    :param task: a TaskManager object.
-    :param address: The IP address of the bare metal node.
-    :raises: InstanceDeployFailure, if notifying ramdisk failed.
-    """
-    node = task.node
-    try:
-        deploy_utils.notify_ramdisk_to_proceed(address)
-    except Exception as e:
-        LOG.error(_LE('Deploy failed for instance %(instance)s. '
-                      'Error: %(error)s'),
-                  {'instance': node.instance_uuid, 'error': e})
-        msg = (_('Failed to notify ramdisk to reboot after bootloader '
-                 'installation. Error: %s') % e)
-        deploy_utils.set_failed_state(task, msg)
-        raise exception.InstanceDeployFailure(msg)
-
-    # TODO(lucasagomes): When deploying a node with the DIB ramdisk
-    # Ironic will not power control the node at the end of the deployment,
-    # it's the DIB ramdisk that reboots the node. But, for the SSH driver
-    # some changes like setting the boot device only gets applied when the
-    # machine is powered off and on again. So the code below is enforcing
-    # it. For Liberty we need to change the DIB ramdisk so that Ironic
-    # always controls the power state of the node for all drivers.
-    if deploy_utils.get_boot_option(node) == "local" and 'ssh' in node.driver:
-        manager_utils.node_power_action(task, states.REBOOT)
-
-    LOG.info(_LI('Deployment to node %s done'), node.uuid)
-    task.process_event('done')
-
-
 class ISCSIDeploy(base.DeployInterface):
     """PXE Deploy Interface for deploy-related actions."""
 
@@ -599,8 +563,10 @@ class ISCSIDeploy(base.DeployInterface):
         :returns: deploy state DELETED.
         """
         manager_utils.node_power_action(task, states.POWER_OFF)
+        task.driver.network.unconfigure_tenant_networks(task)
         return states.DELETED
 
+    @task_manager.require_exclusive_lock
     def prepare(self, task):
         """Prepare the deployment environment for this task's node.
 
@@ -614,6 +580,12 @@ class ISCSIDeploy(base.DeployInterface):
         if node.provision_state == states.ACTIVE:
             task.driver.boot.prepare_instance(task)
         else:
+            if node.provision_state == states.DEPLOYING:
+                # Adding the node to provisioning network so that the dhcp
+                # options get added for the provisioning port.
+                manager_utils.node_power_action(task, states.POWER_OFF)
+                task.driver.network.add_provisioning_network(task)
+
             deploy_opts = build_deploy_ramdisk_options(node)
 
             # NOTE(lucasagomes): We are going to extend the normal PXE config
@@ -754,7 +726,7 @@ class VendorPassthru(agent_base_vendor.BaseAgentVendor):
         task.process_event('resume')
         LOG.debug('Continuing the deployment on node %s', task.node.uuid)
         validate_bootloader_install_status(task, kwargs)
-        finish_deploy(task, kwargs['address'])
+        self.bash_finish_deploy(task, kwargs['address'])
 
     def _initiate_cleaning(self, task):
         """Initiates the steps required to start cleaning for the node.
@@ -838,7 +810,7 @@ class VendorPassthru(agent_base_vendor.BaseAgentVendor):
             msg = _('Failed to continue iSCSI deployment.')
             deploy_utils.set_failed_state(task, msg)
         else:
-            finish_deploy(task, kwargs.get('address'))
+            self.bash_finish_deploy(task, kwargs.get('address'))
 
     @task_manager.require_exclusive_lock
     def continue_deploy(self, task, **kwargs):
@@ -863,3 +835,41 @@ class VendorPassthru(agent_base_vendor.BaseAgentVendor):
         efi_sys_uuid = uuid_dict_returned.get('efi system partition uuid')
         self.prepare_instance_to_boot(task, root_uuid, efi_sys_uuid)
         self.reboot_and_finish_deploy(task)
+
+    @task_manager.require_exclusive_lock
+    def bash_finish_deploy(self, task, address):
+        """Notifies the ramdisk to reboot the node and makes the instance active.
+
+        This method notifies the ramdisk to proceed to reboot and then
+        makes the instance active.
+
+        :param task: a TaskManager object.
+        :param address: The IP address of the bare metal node.
+        :raises: InstanceDeployFailure, if notifying ramdisk failed.
+        """
+        node = task.node
+        try:
+            deploy_utils.notify_ramdisk_to_proceed(address)
+        except Exception as e:
+            LOG.error(_LE('Deploy failed for instance %(instance)s. '
+                          'Error: %(error)s'),
+                      {'instance': node.instance_uuid, 'error': e})
+            msg = (_('Failed to notify ramdisk to reboot after bootloader '
+                     'installation. Error: %s') % e)
+            deploy_utils.set_failed_state(task, msg)
+            raise exception.InstanceDeployFailure(msg)
+
+        # NOTE(Siva): When deploying a node on provision network node's port
+        # should be plugged to tenant network before booting the node. It is
+        # needed to ensure that node receive IP address from tenant network.
+        # Also for SSH driver some changes like setting the boot device only
+        # gets applied when the machine is powered off and on again.
+        manager_utils.node_power_action(task, states.POWER_OFF)
+
+        task.driver.network.remove_provisioning_network(task)
+        task.driver.network.configure_tenant_networks(task)
+
+        manager_utils.node_power_action(task, states.POWER_ON)
+
+        LOG.info(_LI('Deployment to node %s done'), node.uuid)
+        task.process_event('done')
