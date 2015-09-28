@@ -638,6 +638,92 @@ An example of this is shown in the `Enrollment`_ section.
     --ip-version=4 --gateway=$GATEWAY_IP --allocation-pool \
     start=$START_IP,end=$END_IP --enable-dhcp
 
+Configuring Tenant Networks
+---------------------------
+This configuration allows creating a dedicated tenant network, which extends
+the current Ironic capabilities of providing flat networks. This works in conjunction
+with Neutron to allow for provisioning of the Bare Metal server onto the tenant network.
+The result is that multiple tenants can now deploy in an isolated fashion. However,
+this configuration doesn't support trunked ports belonging to multiple networks,
+as well as a bare metal server that has multiple interfaces belonging to different networks.
+
+Note that change to port membership of a portgroup can be done only when a node
+is in a MANAGEABLE/INSPECTING/ENROLL state or in maintenance.
+It might be safest to only allow this when the node is not in a state where
+uninterrupted connectivity is expected. These limitations will also ensure that Neutron
+port updates should only happen during a state change and not automatically
+with any port-update call.
+
+Portgroups are supported since version 1.17 of ironic API, so it is added to
+ironic CLI calls.
+
+Below is an example of a process flow to create such a network:
+
+#. Create a neutron provisioning network and add it in under the neutron section
+   in ``/etc/ironic/ironic.conf``. Network dirvers should be enabled on ironic-conductor
+   by adding them to enabled_network_drivers option under default section::
+
+    [DEFAULT]
+    ...
+    enabled_network_drivers=flat,neutron
+
+    [neutron]
+    ...
+    provisioning_network_uuid=$UUID
+
+#. The network_interface should be set to valid network driver that is used to swithing
+   to cleaning/provisioning networks. For example set to neutron to use Neutron ML2 driver::
+
+    ironic node-create -n $NAME --network-interface neutron
+
+#. Install a compatible ML2 driver which supports Bare Metal provisioning for your switch.
+   Edit ``/etc/neutron/plugins/ml2/ml2_conf.ini`` and modify/add the following::
+
+    [ml2_vendor]
+    param_1=...
+    param_2=...
+    param_3=...
+
+#. Restart the ironic conductor after the modifications::
+
+    Fedora/RHEL7/CentOS7:
+      sudo systemctl restart openstack-ironic-conductor
+
+    Ubuntu:
+      sudo service ironic-conductor restart
+
+#. Make sure that the tftp server is reachable over the provisioning network,
+   by trying to download a file from it::
+
+    tftp $TFTP_IP -c get $FILENAME
+
+   where FILENAME is the file located at the tftp server.
+
+#. A portgroup is a link aggregation, where multiple interfaces on the bare metal server
+   connect to switch ports of a single LAG and belong to the same network. Please remember,
+   as said, that this doesn't work if interfaces belong to multiple networks.
+
+   Create a portgroup in ironic::
+
+    ironic portgroup-create --ironic-api-version 1.17 -n $NODE_UUID \
+    -a $NEW_MAC_ADDRESS --name $NAME
+
+#. If using a portgroup, create a port as following::
+
+    ironic --ironic-api-version 1.17 port-create -a $HW_MAC_ADDRESS \
+    -n $NODE_UUID -l switch_id=$SWITCH_MAC_ADDRESS \
+    -l switch_info=$SWITCH_HOSTNAME -l port_id=$SWITCH_PORT \
+    --portgroup-uuid $PORTGROUP_UUID --pxe-enabled true
+
+#. Check the port configuration::
+
+    ironic --ironic-api-version 1.17 port-show $PORT_UUID
+
+#. Update portgroup membership::
+
+    ironic --ironic-api-version 1.17 port-update $PORT_UUID replace \
+    portgroup_uuid=$NEW_PORTGROUP_UUID
+
 .. _CleaningNetworkSetup:
 
 Configure the Bare Metal service for cleaning
