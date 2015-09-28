@@ -80,14 +80,18 @@ PROVISION_ACTION_STATES = (ir_states.VERBS['manage'],
 
 
 def hide_fields_in_newer_versions(obj):
-    # if requested version is < 1.3, hide driver_internal_info
+    """This method hide fields that were added in newer API versions.
+
+    Certain node fields were introduced at certain API versions.
+    These fields are only made available when the request's API version
+    matches or exceeds the versions when these fields were introduced.
+    """
     if pecan.request.version.minor < versions.MINOR_3_DRIVER_INTERNAL_INFO:
         obj.driver_internal_info = wsme.Unset
 
     if not api_utils.allow_node_logical_names():
         obj.name = wsme.Unset
 
-    # if requested version is < 1.6, hide inspection_*_at fields
     if pecan.request.version.minor < versions.MINOR_6_INSPECT_STATE:
         obj.inspection_finished_at = wsme.Unset
         obj.inspection_started_at = wsme.Unset
@@ -98,6 +102,9 @@ def hide_fields_in_newer_versions(obj):
     if pecan.request.version.minor < versions.MINOR_12_RAID_CONFIG:
         obj.raid_config = wsme.Unset
         obj.target_raid_config = wsme.Unset
+
+    if not api_utils.allow_network_provider():
+        obj.network_provider = wsme.Unset
 
 
 def assert_juno_provision_state_name(obj):
@@ -704,6 +711,9 @@ class Node(base.APIBase):
     states = wsme.wsattr([link.Link], readonly=True)
     """Links to endpoint for retrieving and setting node states"""
 
+    network_provider = wsme.wsattr(wtypes.text)
+    """The network provider to be used for this node"""
+
     # NOTE(deva): "conductor_affinity" shouldn't be presented on the
     #             API because it's an internal value. Don't add it here.
 
@@ -811,7 +821,8 @@ class Node(base.APIBase):
                      maintenance=False, maintenance_reason=None,
                      inspection_finished_at=None, inspection_started_at=time,
                      console_enabled=False, clean_step={},
-                     raid_config=None, target_raid_config=None)
+                     raid_config=None, target_raid_config=None,
+                     network_provider='neutron_plugin')
         # NOTE(matty_dubs): The chassis_uuid getter() is based on the
         # _chassis_uuid variable:
         sample._chassis_uuid = 'edcad704-b2da-41d5-96d9-afd580ecfa12'
@@ -1132,6 +1143,9 @@ class NodesController(rest.RestController):
         api_utils.check_for_invalid_state_and_allow_filter(provision_state)
         if fields is None:
             fields = _DEFAULT_RETURN_FIELDS
+        if (fields and not api_utils.allow_network_provider()
+            and 'network_provider' in fields):
+            raise exception.NotAcceptable()
         return self._get_nodes_collection(chassis_uuid, instance_uuid,
                                           associated, maintenance,
                                           provision_state, marker,
@@ -1223,6 +1237,9 @@ class NodesController(rest.RestController):
         """
         if self.from_chassis:
             raise exception.OperationNotPermitted
+        if (not api_utils.allow_network_provider()
+            and node.as_dict().get('network_provider')):
+            raise exception.NotAcceptable()
 
         # NOTE(deva): get_topic_for checks if node.driver is in the hash ring
         #             and raises NoValidHost if it is not.
@@ -1262,6 +1279,9 @@ class NodesController(rest.RestController):
         """
         if self.from_chassis:
             raise exception.OperationNotPermitted
+        if (not api_utils.allow_network_provider()
+            and api_utils.get_patch_value(patch, '/network_provider')):
+            raise exception.NotAcceptable()
 
         rpc_node = api_utils.get_rpc_node(node_ident)
 

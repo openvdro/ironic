@@ -229,6 +229,7 @@ class TestListNodes(test_api_base.BaseApiTest):
         self.assertIn('inspection_started_at', data['nodes'][0])
         self.assertIn('raid_config', data['nodes'][0])
         self.assertIn('target_raid_config', data['nodes'][0])
+        self.assertIn('network_provider', data['nodes'][0])
         # never expose the chassis_id
         self.assertNotIn('chassis_id', data['nodes'][0])
 
@@ -302,6 +303,18 @@ class TestListNodes(test_api_base.BaseApiTest):
         data = self.get_json('/nodes/%s' % node.uuid,
                              headers={api_base.Version.string: "1.7"})
         self.assertEqual({"foo": "bar"}, data['clean_step'])
+
+    def test_hide_fields_in_newer_versions_network_provider(self):
+        node = obj_utils.create_test_node(self.context,
+                                          network_provider='neutron_plugin')
+        data = self.get_json(
+            '/nodes/detail', headers={api_base.Version.string: '1.15'})
+        self.assertNotIn('network_provider', data['nodes'][0])
+        new_data = self.get_json(
+            '/nodes/detail', headers={api_base.Version.string:
+                                      str(api_v1.MAX_VER)})
+        self.assertEqual(node.network_provider,
+                         new_data['nodes'][0]["network_provider"])
 
     def test_many(self):
         nodes = []
@@ -1320,6 +1333,35 @@ class TestPatch(test_api_base.BaseApiTest):
             self.assertEqual('application/json', response.content_type)
             self.assertEqual(http_client.OK, response.status_code)
 
+    def test_update_network_provider(self):
+        node = obj_utils.create_test_node(self.context,
+                                          uuid=uuidutils.generate_uuid())
+        self.mock_update_node.return_value = node
+        network_provider = 'my_provider'
+        headers = {api_base.Version.string: str(api_v1.MAX_VER)}
+        response = self.patch_json('/nodes/%s' % node.uuid,
+                                   [{'path': '/network_provider',
+                                     'value': network_provider,
+                                     'op': 'add'}],
+                                   headers=headers)
+        self.assertEqual('application/json', response.content_type)
+        self.assertEqual(http_client.OK, response.status_code)
+
+    def test_update_network_provider_old_api(self):
+        node = obj_utils.create_test_node(self.context,
+                                          uuid=uuidutils.generate_uuid())
+        self.mock_update_node.return_value = node
+        network_provider = 'my_provider'
+        headers = {api_base.Version.string: '1.15'}
+        response = self.patch_json('/nodes/%s' % node.uuid,
+                                   [{'path': '/network_provider',
+                                     'value': network_provider,
+                                     'op': 'add'}],
+                                   headers=headers,
+                                   expect_errors=True)
+        self.assertEqual('application/json', response.content_type)
+        self.assertEqual(http_client.NOT_ACCEPTABLE, response.status_code)
+
 
 class TestPost(test_api_base.BaseApiTest):
 
@@ -1604,6 +1646,25 @@ class TestPost(test_api_base.BaseApiTest):
         self.assertEqual(return_value, data)
         # Assert RPC method wasn't called this time
         self.assertFalse(get_methods_mock.called)
+
+    def test_create_node_network_provider(self):
+        ndict = test_api_utils.post_get_test_node(
+            network_provider='my_provider')
+        response = self.post_json('/nodes', ndict,
+                                  headers={api_base.Version.string:
+                                           str(api_v1.MAX_VER)})
+        self.assertEqual(http_client.CREATED, response.status_int)
+        result = self.get_json('/nodes/%s' % ndict['uuid'],
+                               headers={api_base.Version.string:
+                                        str(api_v1.MAX_VER)})
+        self.assertEqual('my_provider', result['network_provider'])
+
+    def test_create_node_network_provider_old_api_version(self):
+        ndict = test_api_utils.post_get_test_node(
+            network_provider='my_provider')
+        response = self.post_json('/nodes', ndict, expect_errors=True)
+        self.assertEqual('application/json', response.content_type)
+        self.assertEqual(http_client.NOT_ACCEPTABLE, response.status_int)
 
 
 class TestDelete(test_api_base.BaseApiTest):

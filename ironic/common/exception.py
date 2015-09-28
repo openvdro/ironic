@@ -257,6 +257,14 @@ class DHCPLoadError(IronicException):
                  "reason: %(reason)s")
 
 
+class NetworkProviderNotFound(NotFound):
+    _msg_fmt = _("Failed to load network provider %(provider_name)s.")
+
+
+class NetworkError(IronicException):
+    _msg_fmt = _("Network operation failure.")
+
+
 class DriverNotFound(NotFound):
     _msg_fmt = _("Could not find the following driver(s): %(driver_name)s.")
 

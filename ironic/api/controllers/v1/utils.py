@@ -273,3 +273,12 @@ def allow_portgroups():
     """
     return (pecan.request.version.minor >=
             versions.MINOR_16_PORTGROUP)
+
+
+def allow_network_provider():
+    """Check if we should support network_provider field.
+
+    Version 1.17 of the API added support for network providers.
+    """
+    return (pecan.request.version.minor >=
+            versions.MINOR_17_NETWORK_PROVIDER)

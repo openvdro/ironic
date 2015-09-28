@@ -29,7 +29,6 @@ from oslo_utils import excutils
 import six
 from six.moves.urllib import parse
 
-from ironic.common import dhcp_factory
 from ironic.common import exception
 from ironic.common.glance_service import service_utils
 from ironic.common.i18n import _
@@ -37,6 +36,7 @@ from ironic.common.i18n import _LE
 from ironic.common.i18n import _LW
 from ironic.common import image_service
 from ironic.common import keystone
+from ironic.common import network
 from ironic.common import states
 from ironic.common import utils
 from ironic.conductor import utils as manager_utils
@@ -886,73 +886,6 @@ def get_boot_option(node):
     return capabilities.get('boot_option', 'netboot').lower()
 
 
-def prepare_cleaning_ports(task):
-    """Prepare the Ironic ports of the node for cleaning.
-
-    This method deletes the cleaning ports currently existing
-    for all the ports of the node and then creates a new one
-    for each one of them.  It also adds 'vif_port_id' to port.extra
-    of each Ironic port, after creating the cleaning ports.
-
-    :param task: a TaskManager object containing the node
-    :raises NodeCleaningFailure: if the previous cleaning ports cannot
-        be removed or if new cleaning ports cannot be created
-    """
-    provider = dhcp_factory.DHCPFactory()
-    # If we have left over ports from a previous cleaning, remove them
-    if getattr(provider.provider, 'delete_cleaning_ports', None):
-        # Allow to raise if it fails, is caught and handled in conductor
-        provider.provider.delete_cleaning_ports(task)
-
-    # Create cleaning ports if necessary
-    if getattr(provider.provider, 'create_cleaning_ports', None):
-        # Allow to raise if it fails, is caught and handled in conductor
-        ports = provider.provider.create_cleaning_ports(task)
-
-        # Add vif_port_id for each of the ports because some boot
-        # interfaces expects these to prepare for booting ramdisk.
-        for port in task.ports:
-            extra_dict = port.extra
-            try:
-                extra_dict['vif_port_id'] = ports[port.uuid]
-            except KeyError:
-                # This is an internal error in Ironic.  All DHCP providers
-                # implementing create_cleaning_ports are supposed to
-                # return a VIF port ID for all Ironic ports.  But
-                # that doesn't seem to be true here.
-                error = (_("When creating cleaning ports, DHCP provider "
-                           "didn't return VIF port ID for %s") % port.uuid)
-                raise exception.NodeCleaningFailure(
-                    node=task.node.uuid, reason=error)
-            else:
-                port.extra = extra_dict
-                port.save()
-
-
-def tear_down_cleaning_ports(task):
-    """Deletes the cleaning ports created for each of the Ironic ports.
-
-    This method deletes the cleaning port created before cleaning
-    was started.
-
-    :param task: a TaskManager object containing the node
-    :raises NodeCleaningFailure: if the cleaning ports cannot be
-        removed.
-    """
-    # If we created cleaning ports, delete them
-    provider = dhcp_factory.DHCPFactory()
-    if getattr(provider.provider, 'delete_cleaning_ports', None):
-        # Allow to raise if it fails, is caught and handled in conductor
-        provider.provider.delete_cleaning_ports(task)
-
-        for port in task.ports:
-            if 'vif_port_id' in port.extra:
-                extra_dict = port.extra
-                extra_dict.pop('vif_port_id', None)
-                port.extra = extra_dict
-                port.save()
-
-
 def build_agent_options(node):
     """Build the options to be passed to the agent ramdisk.
 
@@ -996,7 +929,8 @@ def prepare_inband_cleaning(task, manage_boot=True):
     :raises NodeCleaningFailure: if the previous cleaning ports cannot
         be removed or if new cleaning ports cannot be created
     """
-    prepare_cleaning_ports(task)
+    net_provider = network.get_network_provider(task.node.network_provider)
+    net_provider.add_cleaning_network(task)
 
     # Append required config parameters to node's driver_internal_info
     # to pass to IPA.
@@ -1043,7 +977,8 @@ def tear_down_inband_cleaning(task, manage_boot=True):
     if manage_boot:
         task.driver.boot.clean_up_ramdisk(task)
 
-    tear_down_cleaning_ports(task)
+    net_provider = network.get_network_provider(task.node.network_provider)
+    net_provider.remove_cleaning_network(task)
 
 
 def get_image_instance_info(node):
