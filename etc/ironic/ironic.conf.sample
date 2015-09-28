@@ -97,6 +97,18 @@
 
 
 #
+# Options defined in ironic.common.network
+#
+
+# Network provider to use for switching to
+# cleaning/provisioning/tenant network while provisioning.
+# "neutron_plugin" uses Neutron and "none" uses a no-op
+# provider. Can be overridden on a per-node basis via the
+# node's network_provider attribute. (string value)
+#network_provider=none
+
+
+#
 # Options defined in ironic.common.paths
 #
 
@@ -1516,7 +1528,7 @@
 [neutron]
 
 #
-# Options defined in ironic.dhcp.neutron
+# Options defined in ironic.common.network
 #
 
 # URL for connecting to neutron. (string value)
@@ -1540,6 +1552,10 @@
 # UUID of the network to create Neutron ports on, when booting
 # to a ramdisk for cleaning using Neutron DHCP. (string value)
 #cleaning_network_uuid=<None>
+
+# UUID of the network to create Neutron ports on when booting
+# to a ramdisk for provisioning. (string value)
+#provisioning_network_uuid=<None>
 
 
 [oneview]

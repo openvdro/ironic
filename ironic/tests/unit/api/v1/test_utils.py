@@ -93,6 +93,13 @@ class TestApiUtils(base.TestCase):
         mock_request.version.minor = 15
         self.assertFalse(utils.allow_portgroups())
 
+    @mock.patch.object(pecan, 'request', spec_set=['version'])
+    def test_allow_network_provider(self, mock_request):
+        mock_request.version.minor = 17
+        self.assertTrue(utils.allow_network_provider())
+        mock_request.version.minor = 16
+        self.assertFalse(utils.allow_network_provider())
+
 
 class TestNodeIdent(base.TestCase):
 
