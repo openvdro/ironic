@@ -153,6 +153,17 @@ IRONIC_DEPLOY_DRIVER_ISCSI_WITH_IPA=$(trueorfalse False IRONIC_DEPLOY_DRIVER_ISC
 # The path to the libvirt hooks directory, used if IRONIC_VM_LOG_ROTATE is True
 IRONIC_LIBVIRT_HOOKS_PATH=${IRONIC_LIBVIRT_HOOKS_PATH:-/etc/libvirt/hooks/}
 
+# This flag is uses to build user image with disk-image-builder
+# disk-image-builder options can be set via DISK_IMAGE_BUILDER_OPTS
+IRONIC_BUILD_USER_IMAGE=$(trueorfalse False IRONIC_BUILD_USER_IMAGE)
+
+# Space separated list of options that will be passed to DIB command.
+# Image will be uploaded to glance with ir-user-$IRONIC_DEPLOY_DRIVER name.
+IRONIC_USER_IMAGE_BUILD_OPTS=${IRONIC_USER_IMAGE_BUILD_OPTS:-'baremetal ubuntu vm'}
+
+# Ironic user image name, if is not set ir-user-$IRONIC_DEPLOY_DRIVER is used.
+IRONIC_USER_IMAGE_NAME=${IRONIC_USER_IMAGE_NAME:-ir-user-$IRONIC_DEPLOY_DRIVER}
+
 # get_pxe_boot_file() - Get the PXE/iPXE boot file path
 function get_pxe_boot_file {
     local relpath=syslinux/pxelinux.0
@@ -881,6 +892,20 @@ function install_diskimage_builder {
     fi
 }
 
+function build_dib_user_image {
+    if [[ "$IRONIC_BUILD_USER_IMAGE" == "True" ]]; then
+    echo "Building user image with DIB"
+        pip_install_gr "diskimage-builder"
+        disk-image-create -o $TOP_DIR/ir-user-$IRONIC_DEPLOY_DRIVER  $IRONIC_USER_IMAGE_BUILD_OPTS
+
+        openstack --os-token $token --os-url http://$GLANCE_HOSTPORT image create \
+            $IRONIC_USER_IMAGE_NAME \
+            --public --disk-format=qcow2 \
+            --container-format=bare \
+            --file $TOP_DIR/ir-user-${IRONIC_DEPLOY_DRIVER}.qcow2
+    fi
+}
+
 # build deploy kernel+ramdisk, then upload them to glance
 # this function sets ``IRONIC_DEPLOY_KERNEL_ID``, ``IRONIC_DEPLOY_RAMDISK_ID``
 function upload_baremetal_ironic_deploy {
@@ -958,6 +983,7 @@ function prepare_baremetal_basic_ops {
         configure_ironic_auxiliary
     fi
     upload_baremetal_ironic_deploy
+    build_dib_user_image
     if [[ "$IRONIC_IS_HARDWARE" == "False" ]]; then
         create_bridge_and_vms
     fi
