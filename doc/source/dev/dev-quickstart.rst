@@ -345,6 +345,9 @@ station.  Deploying Ironic with DevStack requires a machine running Ubuntu
 
     http://docs.openstack.org/developer/devstack/
 
+Detailed description of Ironic configuration options can be found at:
+:ref:`devstack ironic options`
+
 Devstack will no longer create the user 'stack' with the desired
 permissions, but does provide a script to perform the task::
 
