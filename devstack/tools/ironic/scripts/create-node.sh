@@ -79,9 +79,13 @@ fi
 
 # echo mac
 VM_MAC=$(virsh dumpxml $NAME | grep "mac address" | head -1 | cut -d\' -f2)
+switch_id=$(ip link show dev $BRIDGE | egrep -o "ether [A-Za-z0-9:]+"|sed "s/ether\ //")
 echo $VM_MAC $VBMC_PORT
 # Send node info to NODES_FILE
 echo "[$NAME]" >> $NODES_FILE
 echo "mac_address=$VM_MAC" >> $NODES_FILE
 echo "vbmc_port=$VBMC_PORT" >> $NODES_FILE
+echo "switch_info=$BRIDGE" >> $NODES_FILE
+echo "port_id=$NAME" >> $NODES_FILE
+echo "switch_id=$switch_id" >> $NODES_FILE
 echo ""
