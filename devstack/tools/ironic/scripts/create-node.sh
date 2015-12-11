@@ -72,6 +72,10 @@ fi
 
 # Send node info to NODES_FILE
 mac_address=$(virsh dumpxml $NAME | grep "mac address" | head -1 | cut -d\' -f2)
+switch_id=$(ip link show dev $BRIDGE | egrep -o "ether [A-Za-z0-9:]+"|sed "s/ether\ //")
 echo "[$NAME]" >> $NODES_FILE
 echo "mac_address=$mac_address" >> $NODES_FILE
+echo "switch_info=$BRIDGE" >> $NODES_FILE
+echo "port_id=$NAME" >> $NODES_FILE
+echo "switch_id=$switch_id" >> $NODES_FILE
 echo ""
