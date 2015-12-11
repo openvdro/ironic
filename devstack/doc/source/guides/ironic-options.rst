@@ -60,3 +60,17 @@ and ``/opt/stack/ironic_ipmi_nodes``:
     switch_info=sw-hostname
     port_id=Gig0/3
     switch_id=00:14:f2:8c:93:c1
+
+
+
+Link Local Connection
+=====================
+
+If Ironic is configured as above (to use a separate neutron provider network
+for provisioning), and you wish to use a local virtualized switch (as opposed
+to a separate physical switch) to emulate and test Neutron provider networks
+with Ironic, then you should set this variable.
+
+::
+
+    IRONIC_USE_LINK_LOCAL=True
