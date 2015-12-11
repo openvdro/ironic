@@ -511,7 +511,7 @@ function _ironic_bm_vm_names {
     local num_vms
     num_vms=$(($IRONIC_VM_COUNT - 1))
     for idx in $(seq 0 $num_vms); do
-        echo "baremetal${IRONIC_VM_NETWORK_BRIDGE}-${idx}"
+        echo "vm-${idx}"
     done
 }
 
@@ -1100,6 +1100,12 @@ function cleanup_baremetal_basic_ops {
     local vm_name
     for vm_name in $(_ironic_bm_vm_names); do
         sudo su $STACK_USER -c "$IRONIC_SCRIPTS_DIR/cleanup-node.sh $vm_name $IRONIC_VM_NETWORK_BRIDGE"
+        # Cleanup node bridge/interfaces
+        sudo ip link set ovs-$vm_name down
+        sudo ip link set br-$vm_name down
+        sudo ovs-vsctl del-port ovs-$vm_name
+        sudo ip link del dev ovs-$vm_name
+        sudo ip link del dev br-$vm_name
     done
 
     sudo rm -rf /etc/xinetd.d/tftp /etc/init/tftpd-hpa.override
