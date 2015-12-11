@@ -15,16 +15,12 @@ MEM=$(( 1024 * $3 ))
 # Extra G to allow fuzz for partition table : flavor size and registered size
 # need to be different to actual size.
 DISK=$(( $4 + 1))
-
-case $5 in
-    i386) ARCH='i686' ;;
-    amd64) ARCH='x86_64' ;;
-    *) echo "Unsupported arch $4!" ; exit 1 ;;
-esac
-
+ARCH=$5
 BRIDGE=$6
 EMULATOR=$7
 LOGDIR=$8
+NODES_FILE=$9
+
 
 LIBVIRT_NIC_DRIVER=${LIBVIRT_NIC_DRIVER:-"e1000"}
 LIBVIRT_STORAGE_POOL=${LIBVIRT_STORAGE_POOL:-"default"}
@@ -74,5 +70,8 @@ if ! virsh list --all | grep -q $NAME; then
         --emulator $EMULATOR --network $BRIDGE $VM_LOGGING >&2
 fi
 
-# echo mac
-virsh dumpxml $NAME | grep "mac address" | head -1 | cut -d\' -f2
+# Send node info to NODES_FILE
+mac_address=$(virsh dumpxml $NAME | grep "mac address" | head -1 | cut -d\' -f2)
+echo "[$NAME]" >> $NODES_FILE
+echo "mac_address=$mac_address" >> $NODES_FILE
+echo ""
