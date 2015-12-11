@@ -54,12 +54,14 @@ IRONIC_HW_NODE_RAM=${IRONIC_HW_NODE_RAM:-512}
 IRONIC_HW_NODE_DISK=${IRONIC_HW_NODE_DISK:-10}
 IRONIC_HW_EPHEMERAL_DISK=${IRONIC_HW_EPHEMERAL_DISK:-0}
 IRONIC_HW_ARCH=${IRONIC_HW_ARCH:-x86_64}
-# The file is composed of multiple lines, each line includes four field
-# separated by white space: IPMI address, MAC address, IPMI username
-# and IPMI password.
-#
-#   192.168.110.107 00:1e:67:57:50:4c root otc123
-IRONIC_IPMIINFO_FILE=${IRONIC_IPMIINFO_FILE:-$IRONIC_DATA_DIR/hardware_info}
+# The file is INI syntax. Section names are ironic node names.
+# Each section contains list of node options
+#[node-1]
+#ipmi_address=1.1.1.1
+#mac_address=0c:c4:7a:51:e6:c0
+#cpus=4
+IRONIC_IPMI_NODES_FILE=${IRONIC_IPMI_NODES_FILE:-$IRONIC_DATA_DIR/ironic_ipmi_nodes}
+IRONIC_VM_NODES_FILE=${IRONIC_VM_NODES_FILE:-$IRONIC_DATA_DIR/ironic_vm_nodes}
 
 # Set up defaults for functional / integration testing
 IRONIC_NODE_UUID=${IRONIC_NODE_UUID:-`uuidgen`}
@@ -80,12 +82,12 @@ IRONIC_VM_SSH_ADDRESS=${IRONIC_VM_SSH_ADDRESS:-$HOST_IP}
 IRONIC_VM_COUNT=${IRONIC_VM_COUNT:-1}
 IRONIC_VM_SPECS_CPU=${IRONIC_VM_SPECS_CPU:-1}
 IRONIC_VM_SPECS_RAM=${IRONIC_VM_SPECS_RAM:-1024}
+IRONIC_VM_SPECS_CPU_ARCH=${IRONIC_VM_SPECS_CPU_ARCH:-'x86_64'}
 IRONIC_VM_SPECS_DISK=${IRONIC_VM_SPECS_DISK:-10}
 IRONIC_VM_EPHEMERAL_DISK=${IRONIC_VM_EPHEMERAL_DISK:-0}
 IRONIC_VM_EMULATOR=${IRONIC_VM_EMULATOR:-/usr/bin/qemu-system-x86_64}
 IRONIC_VM_NETWORK_BRIDGE=${IRONIC_VM_NETWORK_BRIDGE:-brbm}
 IRONIC_VM_NETWORK_RANGE=${IRONIC_VM_NETWORK_RANGE:-192.0.2.0/24}
-IRONIC_VM_MACS_CSV_FILE=${IRONIC_VM_MACS_CSV_FILE:-$IRONIC_DATA_DIR/ironic_macs.csv}
 IRONIC_AUTHORIZED_KEYS_FILE=${IRONIC_AUTHORIZED_KEYS_FILE:-$HOME/.ssh/authorized_keys}
 
 # By default, baremetal VMs will console output to file.
@@ -504,7 +506,7 @@ function _ironic_bm_vm_names {
     local num_vms
     num_vms=$(($IRONIC_VM_COUNT - 1))
     for idx in $(seq 0 $num_vms); do
-        echo "baremetal${IRONIC_VM_NETWORK_BRIDGE}_${idx}"
+        echo "baremetal${IRONIC_VM_NETWORK_BRIDGE}-${idx}"
     done
 }
 
@@ -637,8 +639,8 @@ function create_bridge_and_vms {
     for vm_name in $(_ironic_bm_vm_names); do
         sudo su $STACK_USER -c "$IRONIC_SCRIPTS_DIR/create-node.sh $vm_name \
             $IRONIC_VM_SPECS_CPU $IRONIC_VM_SPECS_RAM $IRONIC_VM_SPECS_DISK \
-            amd64 $IRONIC_VM_NETWORK_BRIDGE $IRONIC_VM_EMULATOR \
-            $vbmc_port $log_arg" >> $IRONIC_VM_MACS_CSV_FILE
+            $IRONIC_VM_SPECS_CPU_ARCH $IRONIC_VM_NETWORK_BRIDGE $IRONIC_VM_EMULATOR \
+            $vbmc_port $log_arg $IRONIC_VM_NODES_FILE"
         vbmc_port=$((vbmc_port+1))
     done
     create_ovs_taps
@@ -701,46 +703,102 @@ function enroll_nodes {
             -i deploy_kernel=$IRONIC_DEPLOY_KERNEL_ID \
             -i deploy_ramdisk=$IRONIC_DEPLOY_RAMDISK_ID"
 
+        local ironic_nodes_file=$IRONIC_VM_NODES_FILE
+        local cpu_arch=$IRONIC_VM_SPECS_CPU_ARCH
     else
-        local ironic_node_cpu=$IRONIC_HW_NODE_CPU
-        local ironic_node_ram=$IRONIC_HW_NODE_RAM
-        local ironic_node_disk=$IRONIC_HW_NODE_DISK
-        local ironic_ephemeral_disk=$IRONIC_HW_EPHEMERAL_DISK
-        local ironic_node_arch=$IRONIC_HW_ARCH
-        if [[ -z "${IRONIC_DEPLOY_DRIVER##*_ipmitool}" ]]; then
-            local ironic_hwinfo_file=$IRONIC_IPMIINFO_FILE
-        fi
+        local ironic_nodes_file=$IRONIC_IPMI_NODES_FILE
+        local cpu_arch=$IRONIC_HW_ARCH
     fi
 
     local total_nodes=0
     local total_cpus=0
-    while read hardware_info; do
-        if [[ "$IRONIC_IS_HARDWARE" == "False" ]]; then
-            local mac_address
-            mac_address=$(echo $hardware_info | awk '{print $1}')
+    local ironic_nodes
+    ironic_nodes=$(iniget_sections "$ironic_nodes_file")
 
+    for node_name in $ironic_nodes; do
+        local mac_address
+        local cpus
+        local memory_mb
+        local local_gb
+        local cpu_arch
+        local ephemeral_disk
+
+        # Common parameters for VM and HW nodes
+        mac_address=$(iniget $ironic_nodes_file $node_name mac_address)
+        cpus=$(iniget $ironic_nodes_file $node_name cpus)
+        memory_mb=$(iniget $ironic_nodes_file $node_name memory_mb)
+        local_gb=$(iniget $ironic_nodes_file $node_name local_gb)
+        ephemeral_disk=$(iniget $ironic_nodes_file $node_name ephemeral_disk)
+
+        # Override empty values with defaults
+        cpus=${cpus:-${IRONIC_VM_SPECS_CPU}}
+        memory_mb=${memory_mb:-${IRONIC_VM_SPECS_RAM}}
+        local_gb=${local_gb:-${IRONIC_VM_SPECS_DISK}}
+        ephemeral_disk=${ephemeral_disk:-${IRONIC_VM_EPHEMERAL_DISK}}
+
+        # VM specific parameters
+        if [[ "$IRONIC_IS_HARDWARE" == "False" ]]; then
             if is_deployed_by_ipmitool; then
                 local vbmc_port
-                vbmc_port=$(echo $hardware_info | awk '{print $2}')
-                node_options+=" -i ipmi_port=$vbmc_port"
+                vbmc_port=$(iniget $ironic_nodes_file $node_name vbmc_port)
+                local node_options="\
+                    -i ipmi_address=127.0.0.1 \
+                    -i ipmi_username=admin \
+                    -i ipmi_password=password
+                    -i ipmit_port=$vbmc_port
+                    "
+            else
+                local ssh_virt_type
+                local ssh_address
+                local ssh_port
+                local ssh_username
+                local ssh_key_filename
+
+                ssh_virt_type=$(iniget $ironic_nodes_file $node_name ssh_virt_type)
+                ssh_address=$(iniget $ironic_nodes_file $node_name ssh_adress)
+                ssh_port=$(iniget $ironic_nodes_file $node_name ssh_port)
+                ssh_username=$(iniget $ironic_nodes_file $node_name ssh_username)
+                ssh_key_filename=$(iniget $ironic_nodes_file $node_name ssh_key_filename)
+
+                # Override empty values with defaults
+                ssh_virt_type=${ssh_virt_type:-${IRONIC_SSH_VIRT_TYPE}}
+                ssh_address=${ssh_address:-${IRONIC_VM_SSH_ADDRESS}}
+                ssh_port=${ssh_port:-${IRONIC_VM_SSH_PORT}}
+                ssh_username=${ssh_username:-${IRONIC_SSH_USERNAME}}
+                ssh_key_filename=${ssh_key_filename:-${IRONIC_KEY_FILE}}
+
+                node_options="
+                    $node_options\
+                    -i ssh_virt_type=$ssh_virt_type \
+                    -i ssh_address=$ssh_address \
+                    -i ssh_port=$ssh_port \
+                    -i ssh_username=$ssh_username \
+                    -i ssh_key_filename=$ssh_key_filename"
             fi
 
-        elif is_deployed_by_ipmitool; then
+        # HW specific parameters
+        else
             local ipmi_address
-            ipmi_address=$(echo $hardware_info |awk  '{print $1}')
-            local mac_address
-            mac_address=$(echo $hardware_info |awk '{print $2}')
-            local ironic_ipmi_username
-            ironic_ipmi_username=$(echo $hardware_info |awk '{print $3}')
-            local ironic_ipmi_passwd
-            ironic_ipmi_passwd=$(echo $hardware_info |awk '{print $4}')
-            # Currently we require all hardware platform have same CPU/RAM/DISK info
-            # in future, this can be enhanced to support different type, and then
-            # we create the bare metal flavor with minimum value
-            local node_options="-i ipmi_address=$ipmi_address -i ipmi_password=$ironic_ipmi_passwd\
-                -i ipmi_username=$ironic_ipmi_username"
-            node_options+=" -i deploy_kernel=$IRONIC_DEPLOY_KERNEL_ID"
-            node_options+=" -i deploy_ramdisk=$IRONIC_DEPLOY_RAMDISK_ID"
+            local ipmi_username
+            local ipmi_password
+            local cpu_arch
+
+            ipmi_address=$(iniget $ironic_nodes_file $node_name ipmi_address)
+            ipmi_username=$(iniget $ironic_nodes_file $node_name ipmi_username)
+            ipmi_password=$(iniget $ironic_nodes_file $node_name ipmi_password)
+
+            # Override empty values with defaults
+            ipmi_username=${ipmi_username:-${IRONIC_IPMI_USERNAME_DEFAULT}}
+            ipmi_password=${ipmi_password:-${IRONIC_IPMI_PASSWORD_DEFAULT}}
+            cpus=${cpus:-${IRONIC_HW_NODE_CPU}}
+            memory_mb=${memory_mb:-${IRONIC_HW_NODE_RAM}}
+            local_gb=${local_gb:-${IRONIC_HW_NODE_DISK}}
+            ephemeral_disk=${ephemeral_disk:-${IRONIC_HW_EPHEMERAL_DISK}}
+
+            local node_options="\
+                -i ipmi_address=${ipmi_address} \
+                -i ipmi_password=${ipmi_password} \
+                -i ipmi_username=${ipmi_username}"
         fi
 
         # First node created will be used for testing in ironic w/o glance
@@ -750,29 +808,38 @@ function enroll_nodes {
             standalone_node_uuid="--uuid $IRONIC_NODE_UUID"
         fi
 
-        local node_id
-        node_id=$(ironic node-create $standalone_node_uuid\
-            --chassis_uuid $chassis_id \
+        node_id=$(ironic node-create $standalone_node_uuid \
             --driver $IRONIC_DEPLOY_DRIVER \
-            --name node-$total_nodes \
-            -p cpus=$ironic_node_cpu\
-            -p memory_mb=$ironic_node_ram\
-            -p local_gb=$ironic_node_disk\
-            -p cpu_arch=$ironic_node_arch \
+            --name ${node_name} \
+            -p cpus=${cpus} \
+            -p memory_mb=${memory_mb} \
+            -p local_gb=${local_gb} \
+            -p cpu_arch=${cpu_arch} \
+            -i deploy_kernel=$IRONIC_DEPLOY_KERNEL_ID \
+            -i deploy_ramdisk=$IRONIC_DEPLOY_RAMDISK_ID \
             $node_options \
-            | grep " uuid " | get_field 2)
+            | grep -w "uuid" | get_field 2)
 
         ironic port-create --address $mac_address --node $node_id
 
+        # Find minimum flavor
+        local adjusted_disk
+        local min_memory_mb
+        local min_cpus
+        local min_adjusted_disk
+        adjusted_disk=$(($local_gb - $ephemeral_disk))
+
+        min_memory_mb=$(( $memory_mb < ${min_memory_mb:=$memory_mb} ? $memory_mb : $min_memory_mb ))
+        min_cpus=$(( $cpus < ${min_cpus:=$cpus} ? $cpus : $min_cpus ))
+        min_adjusted_disk=$(( $adjusted_disk < ${min_adjusted_disk:=$adjusted_disk} ? $adjusted_disk : $min_adjusted_disk ))
+
         total_nodes=$((total_nodes+1))
-        total_cpus=$((total_cpus+$ironic_node_cpu))
-    done < $ironic_hwinfo_file
+        total_cpus=$((total_cpus+$cpus))
+    done
 
-    local adjusted_disk
-    adjusted_disk=$(($ironic_node_disk - $ironic_ephemeral_disk))
-    nova flavor-create --ephemeral $ironic_ephemeral_disk baremetal auto $ironic_node_ram $adjusted_disk $ironic_node_cpu
+    nova flavor-create --ephemeral $ephemeral_disk baremetal auto $min_memory_mb $min_adjusted_disk $min_cpus
 
-    nova flavor-key baremetal set "cpu_arch"="$ironic_node_arch"
+    nova flavor-key baremetal set "cpu_arch"="$cpu_arch"
 
     if [ "$VIRT_DRIVER" == "ironic" ]; then
         # NOTE(dtantsur): sometimes nova compute fails to start with ironic due
@@ -996,7 +1063,7 @@ function cleanup_baremetal_basic_ops {
     if [[ "$IRONIC_BAREMETAL_BASIC_OPS" != "True" ]]; then
         return 0
     fi
-    rm -f $IRONIC_VM_MACS_CSV_FILE
+    rm -f $IRONIC_VM_NODES_FILE
     if [ -f $IRONIC_KEY_FILE ]; then
         local key
         key=$(cat $IRONIC_KEY_FILE.pub)
