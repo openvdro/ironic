@@ -33,6 +33,7 @@
       <virtualport type='openvswitch'/>
       <model type='%(nicdriver)s'/>
       <address type='pci' domain='0x0000' bus='0x00' slot='0x04' function='0x0'/>
+      <target dev='%(name)s'/>
     </interface>
     <input type='mouse' bus='ps2'/>
     <graphics type='vnc' port='-1' autoport='yes'/>

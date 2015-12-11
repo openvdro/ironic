@@ -15,17 +15,13 @@ MEM=$(( 1024 * $3 ))
 # Extra G to allow fuzz for partition table : flavor size and registered size
 # need to be different to actual size.
 DISK=$(( $4 + 1))
-
-case $5 in
-    i386) ARCH='i686' ;;
-    amd64) ARCH='x86_64' ;;
-    *) echo "Unsupported arch $4!" ; exit 1 ;;
-esac
-
+ARCH=$5
 BRIDGE=$6
 EMULATOR=$7
 VBMC_PORT=$8
 LOGDIR=$9
+NODES_FILE=${10}
+
 
 LIBVIRT_NIC_DRIVER=${LIBVIRT_NIC_DRIVER:-"virtio"}
 LIBVIRT_STORAGE_POOL=${LIBVIRT_STORAGE_POOL:-"default"}
@@ -84,3 +80,8 @@ fi
 # echo mac
 VM_MAC=$(virsh dumpxml $NAME | grep "mac address" | head -1 | cut -d\' -f2)
 echo $VM_MAC $VBMC_PORT
+# Send node info to NODES_FILE
+echo "[$NAME]" >> $NODES_FILE
+echo "mac_address=$VM_MAC" >> $NODES_FILE
+echo "vbmc_port=$VBMC_PORT" >> $NODES_FILE
+echo ""
