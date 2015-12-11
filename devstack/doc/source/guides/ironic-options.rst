@@ -28,3 +28,35 @@ ir-user-$IRONIC_DEPLOY_DRIVER name.
     IRONIC_USER_IMAGE_BUILD_OPTS="baremetal ubuntu vm"
 
     IRONIC_USER_IMAGE_NAME="user-image-name"
+
+
+Hardware node registration in Ironic
+====================================
+
+Hardware nodes can be automatically enrolled in Ironic during devstack setup,
+if the IRONIC_IPMI_NODES_FILE variable is set and refers to a valid
+INI-formatted file. In this file, each section represents an Ironic Node,
+and options in that section define the properties of that Node.
+Here is an example:
+
+::
+
+    IRONIC_IPMI_NODES_FILE=/opt/stack/ironic_ipmi_nodes
+
+and ``/opt/stack/ironic_ipmi_nodes``:
+
+::
+
+    [node-1]
+    ipmi_address=1.2.3.4
+    mac_address=aa:bb:cc:dd:ee:ff
+    ipmi_username=ipmi_user
+    ipmi_password=ipmi_password
+    cpus=2
+    memory_mb=16000
+    local_gb=100
+    cpu_arch=x86_64
+    # Link Local Connection info
+    switch_info=sw-hostname
+    port_id=Gig0/3
+    switch_id=00:14:f2:8c:93:c1
