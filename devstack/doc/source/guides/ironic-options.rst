@@ -74,3 +74,42 @@ with Ironic, then you should set this variable.
 ::
 
     IRONIC_USE_LINK_LOCAL=True
+
+
+Ironic provision network
+========================
+
+A separate Neutron network may be used during instance provisioning. It will
+be created on Devstack if the following variables are set. Ironic provision
+network id will be added to ``/etc/ironic/ironic.conf`` and
+``network_provider`` will be set to ``neutron_plugin``. There is an example
+of ``local.conf``:
+
+::
+
+
+    # Ironic provision network name
+    IRONIC_PROVISION_NETWORK_NAME=ironic-provision
+
+    # Provision network provider type. Can be flat of vlan.
+    IRONIC_PROVISION_PROVIDER_NETWORK_TYPE=vlan
+
+    # If provider type is vlan. VLAN_ID may be specified. If it is not set,
+    # vlan will be allocated dynamically.
+    IRONIC_PROVISION_SEGMENTATION_ID=110
+
+    # Allocation network pool for provision network
+    IRONIC_PROVISION_ALLOCATION_POOL=start=10.0.5.10,end=10.0.5.100
+
+    # Ironic provision subnet name. If it is not set
+    # ${IRONIC_PROVISION_NETWORK_NAME}-subnet will be used
+    IRONIC_PROVISION_PROVIDER_SUBNET_NAME=provision-subnet
+
+    # Ironic provision subnet gateway. Gateway ip will be configured on
+    # $OVS_PHYSICAL_BRIDGE.$IRONIC_PROVISION_SEGMENTATION_ID vlan subinterface
+    # if IRONIC_PROVISION_PROVIDER_NETWORK_TYPE=='vlan'. Otherwise gateway ip
+    # will be configured directly on $OVS_PHYSICAL_BRIDGE
+    IRONIC_PROVISION_SUBNET_GATEWAY=10.0.5.1
+
+    # Ironic provision subnet prefix
+    IRONIC_PROVISION_SUBNET_PREFIX=10.0.5.0/24
