@@ -64,6 +64,11 @@ Developer's Guide
   dev/code-contribution-guide
   dev/dev-quickstart
   dev/vendor-passthru
+  dev/ironic-neutron-integration
+
+.. toctree::
+  :maxdepth: 1
+
   dev/faq
 
 Indices and tables
