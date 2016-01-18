@@ -66,4 +66,7 @@ BaremetalGroup = [
     #            help="Timeout for unprovisioning an Ironic node. "
     #                 "Takes longer since Kilo as Ironic performs an extra "
     #                 "step in Node cleaning.")
+    cfg.BoolOpt('use_provision_network',
+                default=False,
+                help="Whether the Ironic/Neutron tenant isolation is enabled")
 ]
