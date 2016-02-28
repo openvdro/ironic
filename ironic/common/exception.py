@@ -615,3 +615,7 @@ class OneViewError(IronicException):
 
 class NodeTagNotFound(IronicException):
     _msg_fmt = _("Node %(node_id)s doesn't have a tag '%(tag)s'")
+
+
+class NetworkError(IronicException):
+    _msg_fmt = _("Network operation failure.")

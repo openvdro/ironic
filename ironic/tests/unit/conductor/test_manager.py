@@ -2322,7 +2322,8 @@ class MiscTestCase(mgr_utils.ServiceSetUpMixin, mgr_utils.CommonMixIn,
                     'management': {'result': True},
                     'boot': {'result': True},
                     'raid': {'result': True},
-                    'deploy': {'result': True}}
+                    'deploy': {'result': True},
+                    'network': {'result': True}}
         self.assertEqual(expected, ret)
         mock_iwdi.assert_called_once_with(self.context, node.instance_info)
 

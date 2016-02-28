@@ -32,6 +32,10 @@ always requests the newest supported API version.
 API Versions History
 --------------------
 
+**1.18**
+
+    This API version adds the network_interface attribute to a node.
+
 **1.17**
 
     This API version adds the portgroup support:

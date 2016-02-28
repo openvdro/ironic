@@ -40,12 +40,29 @@ driver_opts = [
                        'be found by enumerating the "ironic.drivers" '
                        'entrypoint. An example may be found in the '
                        'developer documentation online.')),
+    cfg.ListOpt('enabled_network_drivers',
+                default=['flat'],
+                help=_('Specify the list of network drivers to load during '
+                       'service initialization. Missing drivers, or '
+                       'interfaces which fail to initialize, will prevent the '
+                       'conductor service from starting. The option default '
+                       'is a recommended set of production-oriented '
+                       'drivers. A complete list of drivers present on '
+                       'your system may be found by enumerating the '
+                       '"ironic.drivers.network" entrypoint. An '
+                       'example may be found in the developer documentation '
+                       'online.')),
 ]
 
 CONF = cfg.CONF
 CONF.register_opts(driver_opts)
 
 EM_SEMAPHORE = 'extension_manager'
+
+entrypoint_map = {
+    'ironic.drivers': 'enabled_drivers',
+    'ironic.drivers.network': 'enabled_network_drivers'
+}
 
 
 def build_driver_for_task(task, driver_name=None):
@@ -75,6 +92,13 @@ def _attach_interfaces_to_driver(driver, node, driver_name=None):
         impl = getattr(driver_singleton, iface, None)
         setattr(driver, iface, impl)
 
+    network_iface = node.network_interface
+    try:
+        net_driver = NetworkInterfaceFactory().get_driver(network_iface)
+    except KeyError:
+        raise exception.DriverNotFound(driver_name=network_iface)
+    driver.network = net_driver
+
 
 def get_driver(driver_name):
     """Simple method to get a ref to an instance of a driver.
@@ -92,7 +116,7 @@ def get_driver(driver_name):
 
     try:
         factory = DriverFactory()
-        return factory[driver_name].obj
+        return factory.get_driver(driver_name)
     except KeyError:
         raise exception.DriverNotFound(driver_name=driver_name)
 
@@ -108,8 +132,11 @@ def drivers():
                                    for name in factory.names)
 
 
-class DriverFactory(object):
-    """Discover, load and manage the drivers available."""
+class BaseDriverFactory(object):
+    """Discover, load and manage the drivers available.
+
+    This is subclassed to load both main drivers and extra interfaces.
+    """
 
     # NOTE(deva): loading the _extension_manager as a class member will break
     #             stevedore when it loads a driver, because the driver will
@@ -118,12 +145,18 @@ class DriverFactory(object):
     #             once, the first time DriverFactory.__init__ is called.
     _extension_manager = None
 
+    _entrypoint_name = None
+    _enabled_driver_list = None
+
     def __init__(self):
-        if not DriverFactory._extension_manager:
-            DriverFactory._init_extension_manager()
+        if not self.__class__._extension_manager:
+            self.__class__._init_extension_manager()
 
     def __getitem__(self, name):
         return self._extension_manager[name]
+
+    def get_driver(self, name):
+        return self._extension_manager[name].obj
 
     # NOTE(deva): Use lockutils to avoid a potential race in eventlet
     #             that might try to create two driver factories.
@@ -135,6 +168,8 @@ class DriverFactory(object):
         #             creation of multiple NameDispatchExtensionManagers.
         if cls._extension_manager:
             return
+        cls._enabled_driver_list = CONF.get(
+            entrypoint_map.get(cls._entrypoint_name), [])
 
         # NOTE(deva): Drivers raise "DriverLoadError" if they are unable to be
         #             loaded, eg. due to missing external dependencies.
@@ -147,27 +182,27 @@ class DriverFactory(object):
         def _catch_driver_not_found(mgr, ep, exc):
             # NOTE(deva): stevedore loads plugins *before* evaluating
             #             _check_func, so we need to check here, too.
-            if ep.name in CONF.enabled_drivers:
+            if ep.name in cls._enabled_driver_list:
                 if not isinstance(exc, exception.DriverLoadError):
                     raise exception.DriverLoadError(driver=ep.name, reason=exc)
                 raise exc
 
         def _check_func(ext):
-            return ext.name in CONF.enabled_drivers
+            return ext.name in cls._enabled_driver_list
 
         cls._extension_manager = (
             dispatch.NameDispatchExtensionManager(
-                'ironic.drivers',
+                cls._entrypoint_name,
                 _check_func,
                 invoke_on_load=True,
                 on_load_failure_callback=_catch_driver_not_found))
 
         # NOTE(deva): if we were unable to load any configured driver, perhaps
         #             because it is not present on the system, raise an error.
-        if (sorted(CONF.enabled_drivers) !=
+        if (sorted(cls._enabled_driver_list) !=
                 sorted(cls._extension_manager.names())):
             found = cls._extension_manager.names()
-            names = [n for n in CONF.enabled_drivers if n not in found]
+            names = [n for n in cls._enabled_driver_list if n not in found]
             # just in case more than one could not be found ...
             names = ', '.join(names)
             raise exception.DriverNotFound(driver_name=names)
@@ -179,3 +214,11 @@ class DriverFactory(object):
     def names(self):
         """The list of driver names available."""
         return self._extension_manager.names()
+
+
+class DriverFactory(BaseDriverFactory):
+    _entrypoint_name = 'ironic.drivers'
+
+
+class NetworkInterfaceFactory(BaseDriverFactory):
+    _entrypoint_name = 'ironic.drivers.network'
