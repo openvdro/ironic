@@ -1687,57 +1687,15 @@ class AgentMethodsTestCase(db_base.DbTestCase):
             self.assertEqual(task.node.driver_internal_info.get(
                 'agent_erase_devices_iterations'), 2)
 
-    @mock.patch('ironic.dhcp.neutron.NeutronDHCPApi.delete_cleaning_ports',
-                autospec=True)
-    @mock.patch('ironic.dhcp.neutron.NeutronDHCPApi.create_cleaning_ports',
-                autospec=True)
-    def _test_prepare_inband_cleaning_ports(
-            self, create_mock, delete_mock, return_vif_port_id=True):
-        if return_vif_port_id:
-            create_mock.return_value = {self.ports[0].uuid: 'vif-port-id'}
-        else:
-            create_mock.return_value = {}
-        with task_manager.acquire(
-                self.context, self.node.uuid, shared=False) as task:
-            utils.prepare_cleaning_ports(task)
-            create_mock.assert_called_once_with(mock.ANY, task)
-            delete_mock.assert_called_once_with(mock.ANY, task)
-
-        self.ports[0].refresh()
-        self.assertEqual('vif-port-id', self.ports[0].extra['vif_port_id'])
-
-    def test_prepare_inband_cleaning_ports(self):
-        self._test_prepare_inband_cleaning_ports()
-
-    def test_prepare_inband_cleaning_ports_no_vif_port_id(self):
-        self.assertRaises(
-            exception.NodeCleaningFailure,
-            self._test_prepare_inband_cleaning_ports,
-            return_vif_port_id=False)
-
-    @mock.patch('ironic.dhcp.neutron.NeutronDHCPApi.delete_cleaning_ports',
-                autospec=True)
-    def test_tear_down_inband_cleaning_ports(self, neutron_mock):
-        extra_dict = self.ports[0].extra
-        extra_dict['vif_port_id'] = 'vif-port-id'
-        self.ports[0].extra = extra_dict
-        self.ports[0].save()
-        with task_manager.acquire(
-                self.context, self.node.uuid, shared=False) as task:
-            utils.tear_down_cleaning_ports(task)
-            neutron_mock.assert_called_once_with(mock.ANY, task)
-
-        self.ports[0].refresh()
-        self.assertNotIn('vif_port_id', self.ports[0].extra)
-
     @mock.patch.object(pxe.PXEBoot, 'prepare_ramdisk', autospec=True)
     @mock.patch('ironic.conductor.utils.node_power_action', autospec=True)
     @mock.patch.object(iscsi_deploy, 'build_deploy_ramdisk_options',
                        autospec=True)
     @mock.patch.object(utils, 'build_agent_options', autospec=True)
-    @mock.patch.object(utils, 'prepare_cleaning_ports', autospec=True)
+    @mock.patch('ironic.drivers.modules.network.flat.FlatNetwork.'
+                'add_cleaning_network')
     def _test_prepare_inband_cleaning(
-            self, prepare_cleaning_ports_mock, iscsi_build_options_mock,
+            self, add_cleaning_network_mock, iscsi_build_options_mock,
             build_options_mock, power_mock, prepare_ramdisk_mock,
             manage_boot=True):
         build_options_mock.return_value = {'a': 'b'}
@@ -1747,7 +1705,7 @@ class AgentMethodsTestCase(db_base.DbTestCase):
             self.assertEqual(
                 states.CLEANWAIT,
                 utils.prepare_inband_cleaning(task, manage_boot=manage_boot))
-            prepare_cleaning_ports_mock.assert_called_once_with(task)
+            add_cleaning_network_mock.assert_called_once_with(task)
             power_mock.assert_called_once_with(task, states.REBOOT)
             self.assertEqual(task.node.driver_internal_info.get(
                              'agent_erase_devices_iterations'), 1)
@@ -1766,16 +1724,17 @@ class AgentMethodsTestCase(db_base.DbTestCase):
         self._test_prepare_inband_cleaning(manage_boot=False)
 
     @mock.patch.object(pxe.PXEBoot, 'clean_up_ramdisk', autospec=True)
-    @mock.patch.object(utils, 'tear_down_cleaning_ports', autospec=True)
+    @mock.patch('ironic.drivers.modules.network.flat.FlatNetwork.'
+                'remove_cleaning_network')
     @mock.patch('ironic.conductor.utils.node_power_action', autospec=True)
     def _test_tear_down_inband_cleaning(
-            self, power_mock, tear_down_ports_mock,
+            self, power_mock, remove_cleaning_network_mock,
             clean_up_ramdisk_mock, manage_boot=True):
         with task_manager.acquire(
                 self.context, self.node.uuid, shared=False) as task:
             utils.tear_down_inband_cleaning(task, manage_boot=manage_boot)
             power_mock.assert_called_once_with(task, states.POWER_OFF)
-            tear_down_ports_mock.assert_called_once_with(task)
+            remove_cleaning_network_mock.assert_called_once_with(task)
             if manage_boot:
                 clean_up_ramdisk_mock.assert_called_once_with(
                     task.driver.boot, task)

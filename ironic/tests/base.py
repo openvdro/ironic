@@ -33,6 +33,7 @@ from oslo_config import cfg
 from oslo_config import fixture as config_fixture
 from oslo_context import context as ironic_context
 from oslo_log import log as logging
+from oslo_utils import uuidutils
 import testtools
 
 from ironic.common import config as ironic_config
@@ -115,6 +116,11 @@ class TestCase(testtools.TestCase):
         self.config(use_stderr=False,
                     fatal_exception_format_errors=True,
                     tempdir=tempfile.tempdir)
+        self.config(cleaning_network_uuid=uuidutils.generate_uuid(),
+                    group='neutron')
+        self.config(provisioning_network_uuid=uuidutils.generate_uuid(),
+                    group='neutron')
+        self.config(enabled_network_drivers=['flat', 'neutron'])
         self.set_defaults(host='fake-mini',
                           verbose=True)
         self.set_defaults(connection="sqlite://",

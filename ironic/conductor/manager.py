@@ -199,7 +199,8 @@ class ConductorManager(base_manager.BaseConductorManager):
 
     @messaging.expected_exceptions(exception.InvalidParameterValue,
                                    exception.MissingParameterValue,
-                                   exception.NodeLocked)
+                                   exception.NodeLocked,
+                                   exception.InvalidState)
     def update_node(self, context, node_obj):
         """Update a node with the supplied data.
 
@@ -220,6 +221,19 @@ class ConductorManager(base_manager.BaseConductorManager):
         delta = node_obj.obj_what_changed()
         if 'maintenance' in delta and not node_obj.maintenance:
             node_obj.maintenance_reason = None
+
+        allowed_update_states = [states.ENROLL, states.INSPECTING,
+                                 states.MANAGEABLE]
+        if ('network_interface' in delta and
+                not (node_obj.provision_state in allowed_update_states or
+                     node_obj.maintenance)):
+            action = _("Node %(node)s can not have network_interface updated "
+                       "unless it is in one of allowed (%(allowed)s) states "
+                       "or in maintenance mode.")
+
+            raise exception.InvalidState(
+                action % {'node': node_obj.uuid,
+                          'allowed': ', '.join(allowed_update_states)})
 
         driver_name = node_obj.driver if 'driver' in delta else None
         with task_manager.acquire(context, node_id, shared=False,

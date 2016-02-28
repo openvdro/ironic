@@ -31,7 +31,8 @@ from ironic.conductor import manager
 from ironic import objects
 
 
-def mock_the_extension_manager(driver="fake", namespace="ironic.drivers"):
+def mock_the_extension_manager(driver="fake", namespace="ironic.drivers",
+                               factory=driver_factory.DriverFactory):
     """Get a fake stevedore NameDispatchExtensionManager instance.
 
     :param namespace: A string representing the namespace over which to
@@ -52,10 +53,10 @@ def mock_the_extension_manager(driver="fake", namespace="ironic.drivers"):
     #                    instantiaing a DriverFactory class to avoid
     #                    a real NameDispatchExtensionManager to be created
     #                    with the real namespace.
-    driver_factory.DriverFactory._extension_manager = (
+    factory._extension_manager = (
         dispatch.NameDispatchExtensionManager('ironic.no-such-namespace',
                                               lambda x: True))
-    mock_ext_mgr = driver_factory.DriverFactory()
+    mock_ext_mgr = factory()
     mock_ext = mock_ext_mgr._extension_manager._load_one_plugin(
         entry_point, True, [], {}, False)
     mock_ext_mgr._extension_manager.extensions = [mock_ext]

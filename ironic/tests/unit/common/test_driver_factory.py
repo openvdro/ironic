@@ -17,8 +17,11 @@ from stevedore import dispatch
 
 from ironic.common import driver_factory
 from ironic.common import exception
+from ironic.conductor import task_manager
 from ironic.drivers import base as drivers_base
 from ironic.tests import base
+from ironic.tests.unit.db import base as db_base
+from ironic.tests.unit.objects import utils as obj_utils
 
 
 class FakeEp(object):
@@ -86,3 +89,41 @@ class GetDriverTestCase(base.TestCase):
     def test_get_driver_unknown(self):
         self.assertRaises(exception.DriverNotFound,
                           driver_factory.get_driver, 'unknown_driver')
+
+
+class NetworkInterfaceFactoryTestCase(db_base.DbTestCase):
+    def setUp(self):
+        super(NetworkInterfaceFactoryTestCase, self).setUp()
+        driver_factory.DriverFactory._extension_manager = None
+        driver_factory.NetworkInterfaceFactory._extension_manager = None
+        self.config(enabled_drivers=['fake'])
+
+    def test_build_driver_for_task(self):
+        # flat and neutron network drivers are enabled in base test case
+        factory = driver_factory.NetworkInterfaceFactory
+        node = obj_utils.create_test_node(self.context, driver='fake',
+                                          network_interface='neutron')
+        with task_manager.acquire(self.context, node.id) as task:
+            extension_mgr = factory._extension_manager
+            self.assertIn('neutron', extension_mgr)
+            self.assertEqual(extension_mgr['neutron'].obj, task.driver.network)
+        self.assertEqual('ironic.drivers.network', factory._entrypoint_name)
+        self.assertEqual(['flat', 'neutron'],
+                         sorted(factory._enabled_driver_list))
+
+    def test_build_driver_for_task_unknown_network_interface(self):
+        node = obj_utils.create_test_node(self.context, driver='fake',
+                                          network_interface='meow')
+        self.assertRaises(exception.DriverNotFound, task_manager.acquire,
+                          self.context, node.id)
+
+
+class NewDriverFactory(driver_factory.BaseDriverFactory):
+    _entrypoint_name = 'woof'
+
+
+class NewFactoryTestCase(db_base.DbTestCase):
+    def test_new_driver_factory_unknown_entrypoint(self):
+        factory = NewDriverFactory()
+        self.assertEqual('woof', factory._entrypoint_name)
+        self.assertEqual([], factory._enabled_driver_list)

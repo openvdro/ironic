@@ -306,3 +306,12 @@ def allow_portgroups():
     """
     return (pecan.request.version.minor >=
             versions.MINOR_17_PORTGROUP)
+
+
+def allow_network_interface():
+    """Check if we should support network_interface field.
+
+    Version 1.18 of the API added support for network interfaces.
+    """
+    return (pecan.request.version.minor >=
+            versions.MINOR_18_NETWORK_INTERFACE)

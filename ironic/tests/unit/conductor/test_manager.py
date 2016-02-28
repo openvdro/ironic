@@ -283,6 +283,35 @@ class UpdateNodeTestCase(mgr_utils.ServiceSetUpMixin,
         node.refresh()
         self.assertEqual(existing_driver, node.driver)
 
+    def test_update_network_node_deleting_state(self):
+        node = obj_utils.create_test_node(self.context, driver='fake',
+                                          provision_state=states.DELETING)
+        old_iface = node.network_interface
+        node.network_interface = 'neutron'
+        exc = self.assertRaises(messaging.rpc.ExpectedException,
+                                self.service.update_node,
+                                self.context, node)
+        self.assertEqual(exception.InvalidState, exc.exc_info[0])
+        node.refresh()
+        self.assertEqual(old_iface, node.network_interface)
+
+    def test_update_network_node_manageable_state(self):
+        node = obj_utils.create_test_node(self.context, driver='fake',
+                                          provision_state=states.MANAGEABLE)
+        node.network_interface = 'neutron'
+        self.service.update_node(self.context, node)
+        node.refresh()
+        self.assertEqual('neutron', node.network_interface)
+
+    def test_update_network_node_active_state_and_maintenance(self):
+        node = obj_utils.create_test_node(self.context, driver='fake',
+                                          provision_state=states.ACTIVE,
+                                          maintenance=True)
+        node.network_interface = 'neutron'
+        self.service.update_node(self.context, node)
+        node.refresh()
+        self.assertEqual('neutron', node.network_interface)
+
 
 @mgr_utils.mock_record_keepalive
 class VendorPassthruTestCase(mgr_utils.ServiceSetUpMixin,
@@ -2322,7 +2351,8 @@ class MiscTestCase(mgr_utils.ServiceSetUpMixin, mgr_utils.CommonMixIn,
                     'management': {'result': True},
                     'boot': {'result': True},
                     'raid': {'result': True},
-                    'deploy': {'result': True}}
+                    'deploy': {'result': True},
+                    'network': {'result': True}}
         self.assertEqual(expected, ret)
         mock_iwdi.assert_called_once_with(self.context, node.instance_info)
 

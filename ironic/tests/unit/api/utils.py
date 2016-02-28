@@ -97,6 +97,8 @@ def node_post_data(**kw):
     node.pop('target_raid_config')
     node.pop('raid_config')
     node.pop('tags')
+    if 'network_interface' not in kw:
+        node.pop('network_interface')
     internal = node_controller.NodePatchType.internal_attrs()
     return remove_internal(node, internal)
 

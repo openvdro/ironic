@@ -45,7 +45,8 @@ class Node(base.IronicObject, object_base.VersionedObjectDictCompat):
     # Version 1.13: Add touch_provisioning()
     # Version 1.14: Add _validate_property_values() and make create()
     #               and save() validate the input of property values.
-    VERSION = '1.14'
+    # Version 1.15: Add network_interface field
+    VERSION = '1.15'
 
     dbapi = db_api.get_instance()
 
@@ -101,6 +102,9 @@ class Node(base.IronicObject, object_base.VersionedObjectDictCompat):
         'inspection_started_at': object_fields.DateTimeField(nullable=True),
 
         'extra': object_fields.FlexibleDictField(nullable=True),
+
+        # composable interfaces
+        'network_interface': object_fields.StringField(),
     }
 
     def _validate_property_values(self, properties):
