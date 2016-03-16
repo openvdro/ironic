@@ -183,6 +183,12 @@ IRONIC_USER_IMAGE_NAME=${IRONIC_USER_IMAGE_NAME:-ir-user-$IRONIC_DEPLOY_DRIVER}
 # IRONIC_{VM,HW}_NODES_FILE
 IRONIC_USE_LINK_LOCAL=$(trueorfalse False IRONIC_USE_LINK_LOCAL)
 
+# This flag is used to specify enabled network drivers
+IRONIC_ENABLED_NETWORK_DRIVERS=${IRONIC_ENABLED_NETWORK_DRIVERS:-}
+
+# This flag specify network driver
+IRONIC_NETWORK_DRIVER=${IRONIC_NETWORK_DRIVER:-}
+
 # get_pxe_boot_file() - Get the PXE/iPXE boot file path
 function get_pxe_boot_file {
     local relpath=syslinux/pxelinux.0
@@ -477,6 +483,10 @@ function configure_ironic_conductor {
         iniset $IRONIC_CONF_FILE pxe pxe_bootfile_name $pxebin
         iniset $IRONIC_CONF_FILE deploy http_root $IRONIC_HTTP_DIR
         iniset $IRONIC_CONF_FILE deploy http_url "http://$IRONIC_HTTP_SERVER:$IRONIC_HTTP_PORT"
+    fi
+
+    if [[ -n "$IRONIC_ENABLED_NETWORK_DRIVERS" ]]; then
+        iniset $IRONIC_CONF_FILE DEFAULT enabled_network_drivers $IRONIC_ENABLED_NETWORK_DRIVERS
     fi
 }
 
@@ -901,6 +911,17 @@ function enroll_nodes {
         # In case we using portgroups, we should API version that support them.
         # Othervise API will return 406 ERROR
         ironic $ironic_api_version port-create --address $mac_address --node $node_id $llc_opts
+
+        # NOTE(vsaienko) use node-update instead of specifing network_interface
+        # during node creation. If node is added with latest version of API it
+        # will NOT go to available state automatically.
+        if [[ -n "${IRONIC_NETWORK_DRIVER}" ]]; then
+            local n_id
+            ironic node-set-maintenance $node_id true
+            n_id=$(ironic $ironic_api_version node-update $node_id add network_interface=$IRONIC_NETWORK_DRIVER)
+            die_if_not_set $LINENO n_id "Failed to update network provider for node"
+            ironic node-set-maintenance $node_id false
+        fi
 
         # Find minimum flavor
         local adjusted_disk
