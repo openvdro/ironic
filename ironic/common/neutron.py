@@ -415,6 +415,38 @@ def validate_port_info(node, port):
     return True
 
 
+def cleanup_network_status(task):
+    """Cleanup network port and portgroup status.
+
+    :param task: A TaskManager instance.
+    """
+    for obj in task.ports + task.portgroups:
+        internal_info = obj.internal_info
+        internal_info.pop('network_status', None)
+        obj.internal_info = internal_info
+        obj.save()
+
+
+def get_network_status(port_like_objects):
+    """Returns network status for port and portgroups.
+
+    :param port_like_objects: List of ports and portgroups.
+    :returns: A list with port/portgroup objects that failed to update.
+    """
+    failures = []
+    for obj in port_like_objects:
+        if (obj.internal_info.get('cleaning_vif_port_id') or
+                obj.internal_info.get('provisioning_vif_port_id') or
+                obj.extra.get('vif_port_id')):
+            obj.refresh()
+            network_status = obj.internal_info.get('network_status', None)
+            if network_status != "ACTIVE":
+                failures.append(obj.uuid)
+            LOG.debug("Network status for port %(port_id)s is %(status)s",
+                      {'port_id': obj.uuid, 'status': network_status})
+    return failures
+
+
 class NeutronNetworkInterfaceMixin(object):
 
     _cleaning_network_uuid = None

@@ -87,7 +87,7 @@ class ConductorManager(base_manager.BaseConductorManager):
     """Ironic Conductor manager main class."""
 
     # NOTE(rloo): This must be in sync with rpcapi.ConductorAPI's.
-    RPC_API_VERSION = '1.40'
+    RPC_API_VERSION = '1.41'
 
     target = messaging.Target(version=RPC_API_VERSION)
 
@@ -1840,6 +1840,29 @@ class ConductorManager(base_manager.BaseConductorManager):
             notify_utils.emit_console_notification(
                 task, 'console_set', fields.NotificationStatus.END)
 
+    @METRICS.timer('ConductorManager.process_network_event')
+    def process_network_event(self, context, node_id, event):
+        with task_manager.acquire(context, node_id, shared=False,
+                                  purpose='processing network event') as task:
+            port = objects.Port.get_by_address(context, event['mac_address'])
+            internal_info = port.internal_info
+            LOG.debug("Recived external event for port %(port_id)s with status"
+                      " %(status)s", {'port_id': port.uuid,
+                                      'status': event['status']})
+            internal_info['network_status'] = event['status']
+            port.internal_info = internal_info
+            port.save()
+            waiting_list = task.node.driver_internal_info.get('waiting_for', [])
+            if waiting_list and waiting_list[0] == event['type']:
+                for name, event_handler in driver_factory.NetworkEventHandlersFactory().items():
+                    if getattr(event_handler, event['type'])(task.ports):
+                        dii = task.node.driver_internal_info
+                        dii['waiting_for'].pop(0)
+                        task.node.driver_internal_info = dii
+                        task.node.save()
+                        waiting_for_events(task)
+                        break
+
     @METRICS.timer('ConductorManager.update_port')
     @messaging.expected_exceptions(exception.NodeLocked,
                                    exception.FailedToUpdateMacOnPort,
@@ -2732,6 +2755,32 @@ def _store_configdrive(node, configdrive):
     node.instance_info = i_info
 
 
+@task_manager.require_exclusive_lock
+def waiting_for_events(task):
+    if task.node.driver_internal_info.get('waiting_for') == []:
+        dii = task.node.driver_internal_info
+        dii.pop('waiting_for')
+        task.node.driver_internal_info = dii
+        task.node.save()
+        task.process_event('continue')
+        ## ADD MORE
+    if task.node.driver_internal_info.get('waiting_for') is None:
+        # Adding the node to provisioning network so that the dhcp
+        # options get added for the provisioning port.
+        utils.node_power_action(task, states.POWER_OFF)
+        dii = task.node.driver_internal_info
+        dii['waiting_for'] = ['unconfigure_tenant_networks',
+                              'add_provisioning_network']
+        task.node.driver_internal_info = dii
+        task.node.save()
+    # NOTE(vdrok): in case of rebuild, we have tenant network already
+    # configured, unbind tenant ports if present
+    for method in task.node.driver_internal_info.get('waiting_for'):
+        new_state = getattr(task.driver.network, method)(task)
+        if new_state:
+            return new_state
+
+
 @METRICS.timer('do_node_deploy')
 @task_manager.require_exclusive_lock
 def do_node_deploy(task, conductor_id, configdrive=None):
@@ -2757,6 +2806,11 @@ def do_node_deploy(task, conductor_id, configdrive=None):
                         '%(node)s to Swift'),
                     _('Failed to upload the configdrive to Swift. '
                       'Error: %s'))
+
+        new_state = waiting_for_events(task)
+        if new_state == states.DEPLOYWAIT:
+            task.process_event('wait')
+            return
 
         try:
             task.driver.deploy.prepare(task)

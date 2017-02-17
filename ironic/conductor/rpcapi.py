@@ -92,7 +92,7 @@ class ConductorAPI(object):
     """
 
     # NOTE(rloo): This must be in sync with manager.ConductorManager's.
-    RPC_API_VERSION = '1.40'
+    RPC_API_VERSION = '1.41'
 
     def __init__(self, topic=None):
         super(ConductorAPI, self).__init__()
@@ -463,6 +463,11 @@ class ConductorAPI(object):
         cctxt = self.client.prepare(topic=topic or self.topic, version='1.11')
         return cctxt.call(context, 'set_console_mode', node_id=node_id,
                           enabled=enabled)
+
+    def process_network_event(self, context, node_id, event, topic=None):
+        cctxt = self.client.prepare(topic=topic or self.topic, version='1.41')
+        return cctxt.call(context, 'process_network_event', node=node_id,
+                          event=event)
 
     def update_port(self, context, port_obj, topic=None):
         """Synchronously, have a conductor update the port's information.

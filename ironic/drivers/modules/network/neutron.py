@@ -21,6 +21,7 @@ from oslo_log import log
 from ironic.common import exception
 from ironic.common.i18n import _, _LI
 from ironic.common import neutron
+from ironic.common import states
 from ironic.drivers import base
 from ironic.drivers.modules.network import common
 from ironic import objects
@@ -246,3 +247,9 @@ class NeutronNetwork(common.VIFPortIDMixin,
             if not vif_port_id:
                 continue
             neutron.unbind_neutron_port(vif_port_id)
+
+        driver_internal_info = node.driver_internal_info
+        driver_internal_info['waiting_for'] = 'port_unbound'
+        node.driver_internal_info = driver_internal_info
+        node.save()
+        return states.DEPLOYWAIT

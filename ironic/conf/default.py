@@ -143,6 +143,8 @@ driver_opts = [
                 help=_ENABLED_IFACE_HELP.format('vendor')),
     cfg.StrOpt('default_vendor_interface',
                help=_DEFAULT_IFACE_HELP.format('vendor')),
+    cfg.StrOpt('enabled_network_event_handlers', default='neutron',
+               help=_('Enabled net handlers'))
 ]
 
 exc_log_opts = [

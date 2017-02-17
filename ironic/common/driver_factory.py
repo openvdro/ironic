@@ -560,3 +560,9 @@ _INTERFACE_LOADERS = {
 # refactor them later to use _INTERFACE_LOADERS.
 NetworkInterfaceFactory = _INTERFACE_LOADERS['network']
 StorageInterfaceFactory = _INTERFACE_LOADERS['storage']
+
+
+class NetworkEventHandlersFactory(BaseDriverFactory):
+    _entrypoint_name = 'ironic.event_handlers.network'
+    _enabled_driver_list_config_option = 'enabled_network_event_handlers'
+    _logging_template = _LI("Loaded the following network event handlers: %s")

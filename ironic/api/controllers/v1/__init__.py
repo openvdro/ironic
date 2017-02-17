@@ -27,6 +27,7 @@ from ironic.api.controllers import base
 from ironic.api.controllers import link
 from ironic.api.controllers.v1 import chassis
 from ironic.api.controllers.v1 import driver
+from ironic.api.controllers.v1 import events
 from ironic.api.controllers.v1 import node
 from ironic.api.controllers.v1 import port
 from ironic.api.controllers.v1 import portgroup
@@ -89,6 +90,9 @@ class V1(base.APIBase):
 
     heartbeat = [link.Link]
     """Links to the heartbeat resource"""
+
+    events = [link.Link]
+    """Links to the external event resource"""
 
     @staticmethod
     def convert():
@@ -155,6 +159,13 @@ class V1(base.APIBase):
                                                 'heartbeat', '',
                                                 bookmark=True)
                             ]
+        v1.events = [link.Link.make_link('self', pecan.request.public_url,
+                                         'events', ''),
+                     link.Link.make_link('bookmark',
+                                         pecan.request.public_url,
+                                         'events', '',
+                                         bookmark=True)
+                     ]
         return v1
 
 
@@ -168,6 +179,7 @@ class Controller(rest.RestController):
     drivers = driver.DriversController()
     lookup = ramdisk.LookupController()
     heartbeat = ramdisk.HeartbeatController()
+    events = events.EventsController()
 
     @expose.expose(V1)
     def get(self):
