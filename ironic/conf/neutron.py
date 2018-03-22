@@ -108,6 +108,8 @@ opts = [
                        '"neutron" network interface and not used for the '
                        '"flat" or "noop" network interfaces. If not '
                        'specified, the default security group is used.')),
+    cfg.BoolOpt('events_enabled', default=True, help='aaa'),
+    cfg.IntOpt('events_timeout', default=300, help='bbb'),
 ]
 
 

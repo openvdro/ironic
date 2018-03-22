@@ -99,7 +99,7 @@ class ConductorAPI(object):
     # NOTE(rloo): This must be in sync with manager.ConductorManager's.
     # NOTE(pas-ha): This also must be in sync with
     #               ironic.common.release_mappings.RELEASE_MAPPING['master']
-    RPC_API_VERSION = '1.44'
+    RPC_API_VERSION = '1.45'
 
     def __init__(self, topic=None):
         super(ConductorAPI, self).__init__()
@@ -1052,3 +1052,8 @@ class ConductorAPI(object):
         cctxt = self.client.prepare(topic=topic or self.topic, version='1.44')
         return cctxt.call(context, 'remove_node_traits', node_id=node_id,
                           traits=traits)
+
+    def process_event(self, context, node_id, event, topic=None):
+        cctxt = self.client.prepare(topic=topic or self.topic, version='1.45')
+        return cctxt.call(context, 'process_event', node_id=node_id,
+                          event=event)

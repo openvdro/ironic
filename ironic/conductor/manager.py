@@ -58,11 +58,13 @@ from oslo_utils import uuidutils
 from six.moves import queue
 
 from ironic.common import driver_factory
+from ironic.common import events
 from ironic.common import exception
 from ironic.common.glance_service import service_utils as glance_utils
 from ironic.common.i18n import _
 from ironic.common import images
 from ironic.common import network
+from ironic.common import neutron
 from ironic.common import states
 from ironic.common import swift
 from ironic.conductor import base_manager
@@ -96,7 +98,7 @@ class ConductorManager(base_manager.BaseConductorManager):
     # NOTE(rloo): This must be in sync with rpcapi.ConductorAPI's.
     # NOTE(pas-ha): This also must be in sync with
     #               ironic.common.release_mappings.RELEASE_MAPPING['master']
-    RPC_API_VERSION = '1.44'
+    RPC_API_VERSION = '1.45'
 
     target = messaging.Target(version=RPC_API_VERSION)
 
@@ -3201,6 +3203,18 @@ class ConductorManager(base_manager.BaseConductorManager):
                 for trait in traits:
                     objects.Trait.destroy(context, node_id=node_id,
                                           trait=trait)
+
+    @METRICS.timer('ConductorManager.process_event')
+    def process_event(self, context, node_id, event):
+        with task_manager.acquire(context, node_id, shared=True,
+                                  purpose='processing event') as task:
+            payload = event['payload']
+            LOG.debug("Received external event %(event)s",
+                      {'event': payload})
+            interface = getattr(task.driver, event['interface'])
+            interface.event_handler.validate_event_payload(payload)
+            interface.event_handler.process_incoming_event(
+                task, context, node_id, payload)
 
 
 @METRICS.timer('get_vendor_passthru_metadata')

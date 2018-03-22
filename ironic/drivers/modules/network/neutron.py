@@ -17,6 +17,7 @@
 from oslo_config import cfg
 from oslo_log import log
 
+from ironic.common import events
 from ironic.common import exception
 from ironic.common.i18n import _
 from ironic.common import neutron
@@ -30,10 +31,41 @@ LOG = log.getLogger(__name__)
 CONF = cfg.CONF
 
 
+def ironic_net_async_filter(task):
+    return [p for p in task.ports if p.pxe_enabled]
+
+
+def tenant_net_bind_async_filter(task):
+    ports = [p for p in task.ports if not p.portgroup_id]
+    return [port_like_obj for port_like_obj in ports + task.portgroups
+            if port_like_obj.internal_info.get('tenant_vif_port_id')]
+
+
+def tenant_net_unbind_async_filter(task):
+    ports = [p for p in task.ports if not p.portgroup_id]
+    tracking = []
+    for port_like_obj in ports + task.portgroups:
+        i_info = port_like_obj.internal_info
+        vif_port_id = i_info.get('tenant_vif_port_id')
+        if vif_port_id:
+            if not i_info.get('network_status'):
+                i_info['network_status'] = neutron._get_port_by_uuid(neutron.get_client(), vif_port_id)['status']
+                port_like_obj.internal_info = i_info
+                port_like_obj.save()
+                LOG.debug('Saved network status %(status)s of VIF %(vif)s to port %(port)s',
+                          {'status': i_info['network_status'], 'vif': vif_port_id,
+                           'port': port_like_obj.uuid})
+            if i_info['network_status'] not in ('DOWN', 'ERROR'):
+                tracking.append(port_like_obj)
+    return tracking
+
+
 class NeutronNetwork(common.NeutronVIFPortIDMixin,
                      neutron.NeutronNetworkInterfaceMixin,
                      base.NetworkInterface):
     """Neutron v2 network interface"""
+
+    event_handler = events.NeutronEventWaiter
 
     def __init__(self):
         failures = []
@@ -71,6 +103,7 @@ class NeutronNetwork(common.NeutronVIFPortIDMixin,
                            'option.') % node.uuid)
             raise exception.InvalidParameterValue(error_msg)
 
+    @base.async_method('ACTIVE', 'any', ironic_net_async_filter)
     def add_provisioning_network(self, task):
         """Add the provisioning network to a node.
 
@@ -93,6 +126,7 @@ class NeutronNetwork(common.NeutronVIFPortIDMixin,
                 port.internal_info = internal_info
                 port.save()
 
+    @base.async_method('DELETED', 'all', ironic_net_async_filter)
     def remove_provisioning_network(self, task):
         """Remove the provisioning network from a node.
 
@@ -110,6 +144,7 @@ class NeutronNetwork(common.NeutronVIFPortIDMixin,
                 port.internal_info = internal_info
                 port.save()
 
+    @base.async_method('ACTIVE', 'any', ironic_net_async_filter)
     def add_cleaning_network(self, task):
         """Create neutron ports for each port on task.node to boot the ramdisk.
 
@@ -133,6 +168,7 @@ class NeutronNetwork(common.NeutronVIFPortIDMixin,
                 port.save()
         return vifs
 
+    @base.async_method('DELETED', 'all', ironic_net_async_filter)
     def remove_cleaning_network(self, task):
         """Deletes the neutron port created for booting the ramdisk.
 
@@ -160,6 +196,7 @@ class NeutronNetwork(common.NeutronVIFPortIDMixin,
         """
         self.get_rescuing_network_uuid(task)
 
+    @base.async_method('ACTIVE', 'any', ironic_net_async_filter)
     def add_rescuing_network(self, task):
         """Create neutron ports for each port to boot the rescue ramdisk.
 
@@ -182,6 +219,7 @@ class NeutronNetwork(common.NeutronVIFPortIDMixin,
                 port.save()
         return vifs
 
+    @base.async_method('DELETED', 'all', ironic_net_async_filter)
     def remove_rescuing_network(self, task):
         """Deletes neutron port created for booting the rescue ramdisk.
 
@@ -199,6 +237,7 @@ class NeutronNetwork(common.NeutronVIFPortIDMixin,
                 port.internal_info = internal_info
                 port.save()
 
+    @base.async_method('ACTIVE', 'any', tenant_net_bind_async_filter)
     def configure_tenant_networks(self, task):
         """Configure tenant networks for a node.
 
@@ -237,6 +276,7 @@ class NeutronNetwork(common.NeutronVIFPortIDMixin,
             LOG.error(msg)
             raise exception.NetworkError(msg)
 
+    @base.async_method('DOWN', 'all', tenant_net_unbind_async_filter)
     def unconfigure_tenant_networks(self, task):
         """Unconfigure tenant networks for a node.
 
@@ -253,8 +293,9 @@ class NeutronNetwork(common.NeutronVIFPortIDMixin,
         ports = [p for p in task.ports if not p.portgroup_id]
         portgroups = task.portgroups
         for port_like_obj in ports + portgroups:
+            i_info = port_like_obj.internal_info
             vif_port_id = (
-                port_like_obj.internal_info.get(common.TENANT_VIF_KEY)
+                i_info.get(common.TENANT_VIF_KEY)
                 or port_like_obj.extra.get('vif_port_id'))
             if not vif_port_id:
                 continue

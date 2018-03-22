@@ -24,11 +24,14 @@ import inspect
 import json
 import os
 
+import eventlet
+import futurist
 from oslo_log import log as logging
 from oslo_utils import excutils
 import six
 
 from ironic.common import exception
+from ironic.common import events
 from ironic.common.i18n import _
 from ironic.common import raid
 from ironic.common import states
@@ -200,6 +203,57 @@ Includes interfaces not exposed via BaseDriver.all_interfaces.
 """
 
 
+def async_method(desired_status, success_strategy, filter):
+    def inner(f):
+        setattr(f, '_asynchronous_action', True)
+        setattr(f, '_async_desired_status', desired_status)
+        setattr(f, '_async_success_strategy', success_strategy)
+        setattr(f, '_async_success_filter', filter)
+        return f
+    return inner
+
+
+class events_wait_class(object):
+    def __init__(self, fun):
+        self.fun = fun
+
+    def __call__(self, task, *args, **kwargs):
+        waiter_class = getattr(task.driver, self.fun.im_class.interface_type).event_handler
+        if waiter_class and waiter_class.validate_wait(task):
+            waiter = waiter_class(
+	        getattr(self.fun, '_async_desired_status'),
+	        getattr(self.fun, '_async_success_strategy'),
+	        getattr(self.fun, '_async_success_filter'))
+	    status_object = waiter.pre_wait(task)
+
+            def async_wait_execution():
+	        waiter.wait(task, status_object)
+
+            def async_fun_execution():
+                return self.fun(task, *args, **kwargs)
+
+            e = futurist.GreenThreadPoolExecutor()
+            fut_waiter = e.submit(async_wait_execution)
+            fut_function = e.submit(async_fun_execution)
+            waiter.process_event_join(status_object, fut_function)
+            LOG.debug('Started waiting for completion of function %s', self.fun.__name__)
+	    try:
+                e.shutdown(wait=True)
+                res = fut_function.result()
+	    except Exception as e:
+	        waiter.on_wait_error(task, e)
+	    waiter.post_wait(task)
+        else:
+            res = self.fun(task, *args, **kwargs)
+        return res
+
+    def __get__(self, obj, type=None):
+        if obj is None:
+            return self
+        new_fun = self.fun.__get__(obj, type)
+        return self.__class__(new_fun)
+
+
 @six.add_metaclass(abc.ABCMeta)
 class BaseInterface(object):
     """A base interface implementing common functions for Driver Interfaces."""
@@ -213,6 +267,9 @@ class BaseInterface(object):
 
     interface_type = 'base'
     """Interface type, used for clean steps and logging."""
+
+    event_handler = None
+    """Handler for asynchronous events, if triggered by this interface."""
 
     @abc.abstractmethod
     def get_properties(self):
@@ -258,6 +315,9 @@ class BaseInterface(object):
                         'argsinfo': method._clean_step_argsinfo,
                         'interface': instance.interface_type}
                 instance.clean_steps.append(step)
+            if getattr(method, '_asynchronous_action', False):
+                setattr(instance, n, events_wait_class(
+                    method))
         LOG.debug('Found clean steps %(steps)s for interface %(interface)s',
                   {'steps': instance.clean_steps,
                    'interface': instance.interface_type})
