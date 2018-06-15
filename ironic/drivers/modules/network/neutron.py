@@ -35,6 +35,18 @@ def ironic_net_async_filter(task):
     return [p for p in task.ports if p.pxe_enabled]
 
 
+def remove_provision_net_async_filter(task):
+    return [p for p in task.ports if p.pxe_enabled and p.internal_info.get('provisioning_vif_port_id')]
+
+
+def remove_clean_net_async_filter(task):
+    return [p for p in task.ports if p.pxe_enabled and p.internal_info.get('cleaning_vif_port_id')]
+
+
+def remove_rescue_net_async_filter(task):
+    return [p for p in task.ports if p.pxe_enabled and p.internal_info.get('rescuing_vif_port_id')]
+
+
 def tenant_net_bind_async_filter(task):
     ports = [p for p in task.ports if not p.portgroup_id]
     return [port_like_obj for port_like_obj in ports + task.portgroups
@@ -44,18 +56,21 @@ def tenant_net_bind_async_filter(task):
 def tenant_net_unbind_async_filter(task):
     ports = [p for p in task.ports if not p.portgroup_id]
     tracking = []
+    #import rpdb; rpdb.set_trace()
     for port_like_obj in ports + task.portgroups:
         i_info = port_like_obj.internal_info
         vif_port_id = i_info.get('tenant_vif_port_id')
         if vif_port_id:
-            if not i_info.get('network_status'):
-                i_info['network_status'] = neutron._get_port_by_uuid(neutron.get_client(), vif_port_id)['status']
-                port_like_obj.internal_info = i_info
-                port_like_obj.save()
-                LOG.debug('Saved network status %(status)s of VIF %(vif)s to port %(port)s',
-                          {'status': i_info['network_status'], 'vif': vif_port_id,
-                           'port': port_like_obj.uuid})
-            if i_info['network_status'] not in ('DOWN', 'ERROR'):
+            network_status = neutron._get_port_by_uuid(neutron.get_client(), vif_port_id)['status']
+            if network_status in ('DOWN', 'ERROR'):
+                # This is a hack so that we don't have to wait for unbind event if
+                # port is already unbound
+                #i_info['network_status'] = network_status
+                #port_like_obj.internal_info = i_info
+                #port_like_obj.save()
+                LOG.debug('VIF %(vif)s of port %(port)s already unbound',
+                          {'vif': vif_port_id, 'port': port_like_obj.uuid})
+            if network_status not in ('DOWN', 'ERROR'):
                 tracking.append(port_like_obj)
     return tracking
 
@@ -126,7 +141,7 @@ class NeutronNetwork(common.NeutronVIFPortIDMixin,
                 port.internal_info = internal_info
                 port.save()
 
-    @base.async_method('DELETED', 'all', ironic_net_async_filter)
+    @base.async_method('DELETED', 'all', remove_provision_net_async_filter)
     def remove_provisioning_network(self, task):
         """Remove the provisioning network from a node.
 
@@ -168,7 +183,7 @@ class NeutronNetwork(common.NeutronVIFPortIDMixin,
                 port.save()
         return vifs
 
-    @base.async_method('DELETED', 'all', ironic_net_async_filter)
+    @base.async_method('DELETED', 'all', remove_clean_net_async_filter)
     def remove_cleaning_network(self, task):
         """Deletes the neutron port created for booting the ramdisk.
 
@@ -219,7 +234,7 @@ class NeutronNetwork(common.NeutronVIFPortIDMixin,
                 port.save()
         return vifs
 
-    @base.async_method('DELETED', 'all', ironic_net_async_filter)
+    @base.async_method('DELETED', 'all', remove_rescue_net_async_filter)
     def remove_rescuing_network(self, task):
         """Deletes neutron port created for booting the rescue ramdisk.
 

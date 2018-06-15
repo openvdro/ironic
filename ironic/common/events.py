@@ -1,5 +1,6 @@
 import eventlet
 from oslo_log import log
+from oslo_concurrency import lockutils
 
 from ironic.common import exception
 from ironic.conf import CONF
@@ -50,7 +51,8 @@ def create_network_status_semaphore_for_node(node_uuid, vif_count, vif_ids, desi
     net_status = {'semaphore': eventlet.semaphore.Semaphore(0),
                   'waiting_for': vif_count,
                   'waiting_for_ids': vif_ids,
-                  'desired_status': desired_status}
+                  'desired_status': desired_status,
+                  'error_ids': set()}
     NEUTRON_SEMAPHORES[node_uuid] = net_status
     return net_status
 
@@ -108,27 +110,36 @@ class NeutronEventWaiter(EventWaiter):
             if semaphore.get('join_future'):
                 semaphore['join_future'].result()
             port.refresh()
-            internal_info = port.internal_info
-            network_status = internal_info.get('network_status')
-            internal_info['network_status'] = payload['status']
-            port.internal_info = internal_info
-            port.save()
-            if (payload['status'] == semaphore['desired_status'] and
-                    (task.driver.network.get_current_vif(task, port) == payload['port_id'] or
-                     payload['port_id'] in semaphore['waiting_for_ids'])):
-                LOG.debug('we are waiting for this event! port %(port)s status set, '
-                          'internal info is %(info)s', {'port': port.uuid, 'info': port.internal_info})
-                semaphore['waiting_for'] -= 1
-            if semaphore['waiting_for'] == 0:
-                semaphore['semaphore'].release()
+
+            @lockutils.synchronized('neutron-event-%s' % node_uuid)
+            def _synchronized_processing():
+                if payload['status'] == semaphore['desired_status']:
+                    if (task.driver.network.get_current_vif(task, port) == payload['port_id'] or
+                            payload['port_id'] in semaphore['waiting_for_ids']):
+                        LOG.debug('we are waiting for this event! port %(port)s status set, '
+                                  'internal info is %(info)s', {'port': port.uuid, 'info': port.internal_info})
+                        semaphore['waiting_for'] -= 1
+                        try:
+                            semaphore['error_ids'].remove(payload['port_id'])
+                        except KeyError:
+                            pass
+                else:
+                    semaphore['error_ids'].add(payload['port_id'])
+                if semaphore['waiting_for'] == 0:
+                    semaphore['semaphore'].release()
+
+            _synchronized_processing()
 
     @staticmethod
     def validate_wait(task):
         return CONF.neutron.events_enabled
 
     def pre_wait(self, task):
-        cleanup_network_status(task)
-        vif_ids = [task.driver.network.get_current_vif(task, port) for port in self.filter_function(task)]
+        self.filtered_objects = self.filter_function(task)
+        if self.filter_function.__name__ == 'tenant_net_unbind_async_filter':
+            #import rpdb; rpdb.set_trace()
+            pass
+        vif_ids = [task.driver.network.get_current_vif(task, obj) for obj in self.filtered_objects]
         n_status = create_network_status_semaphore_for_node(
             task.node.uuid, len(vif_ids), vif_ids, self.desired_status)
         return n_status
@@ -144,18 +155,23 @@ class NeutronEventWaiter(EventWaiter):
         waiter['join_future'] = future
 
     def post_wait(self, task):
-        NEUTRON_SEMAPHORES.pop(task.node.uuid)
-        objs = self.filter_function(task)
-        failures = get_network_status(task, objs, self.desired_status,
-                                      self.success_strategy)
+        #import rpdb; rpdb.set_trace()
+        objs = self.filtered_objects
+        semaphore = NEUTRON_SEMAPHORES.pop(task.node.uuid)
+        failures = semaphore['error_ids']
+        if len(semaphore['error_ids']) < len(objs) and self.success_strategy == 'any':
+            failures = []
         if not failures:
-            cleanup_network_status(task)
             if objs:
                 task.process_event('resume')
         else:
             task.process_event('fail')
-            raise exception.NetworkError()
+            raise exception.NetworkError('The following VIFs did not get to the '
+                                         'desired status: %s' % failures)
 
     def on_wait_error(self, task, error):
+        failures = NEUTRON_SEMAPHORES.pop(task.node.uuid, {}).get('error_ids')
         task.process_event('fail')
-        raise exception.NetworkError()
+        if failures:
+            error += ' The following VIFs did not get to the desired status: %s' % failures
+        raise exception.NetworkError(error)

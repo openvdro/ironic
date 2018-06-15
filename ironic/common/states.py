@@ -125,6 +125,8 @@ deployed node should go to ACTIVE status.
 DELETING = 'deleting'
 """ Node is actively being torn down. """
 
+DELETEWAIT = 'delete wait'
+
 DELETED = 'deleted'
 """ Node tear down was successful.
 
@@ -230,7 +232,7 @@ STABLE_STATES = (ENROLL, MANAGEABLE, AVAILABLE, ACTIVE, ERROR, RESCUE)
 """States that will not transition unless receiving a request."""
 
 UNSTABLE_STATES = (DEPLOYING, DEPLOYWAIT, CLEANING, CLEANWAIT, VERIFYING,
-                   DELETING, INSPECTING, INSPECTWAIT, ADOPTING, RESCUING,
+                   DELETING, DELETEWAIT, INSPECTING, INSPECTWAIT, ADOPTING, RESCUING,
                    RESCUEWAIT, UNRESCUING)
 """States that can be changed without external request."""
 
@@ -296,6 +298,7 @@ machine.add_state(CLEANFAIL, target=AVAILABLE, **watchers)
 
 # Add delete* states
 machine.add_state(DELETING, target=AVAILABLE, **watchers)
+machine.add_state(DELETEWAIT, target=AVAILABLE, **watchers)
 
 # From AVAILABLE, a deployment may be started
 machine.add_transition(AVAILABLE, DEPLOYING, 'deploy')
@@ -353,6 +356,9 @@ machine.add_transition(DEPLOYFAIL, DELETING, 'delete')
 
 # This state can also transition to error
 machine.add_transition(DELETING, ERROR, 'error')
+machine.add_transition(DELETING, DELETEWAIT, 'wait')
+machine.add_transition(DELETEWAIT, DELETING, 'resume')
+machine.add_transition(DELETEWAIT, ERROR, 'fail')
 
 # When finished deleting, a node will begin cleaning
 machine.add_transition(DELETING, CLEANING, 'clean')

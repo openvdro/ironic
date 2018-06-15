@@ -232,17 +232,19 @@ class events_wait_class(object):
             def async_fun_execution():
                 return self.fun(task, *args, **kwargs)
 
-            e = futurist.GreenThreadPoolExecutor()
-            fut_waiter = e.submit(async_wait_execution)
-            fut_function = e.submit(async_fun_execution)
+            executor = futurist.GreenThreadPoolExecutor()
+            fut_waiter = executor.submit(async_wait_execution)
+            fut_function = executor.submit(async_fun_execution)
             waiter.process_event_join(status_object, fut_function)
             LOG.debug('Started waiting for completion of function %s', self.fun.__name__)
 	    try:
-                e.shutdown(wait=True)
+                executor.shutdown(wait=True)
                 res = fut_function.result()
 	    except Exception as e:
-	        waiter.on_wait_error(task, e)
-	    waiter.post_wait(task)
+                LOG.exception('Either event wait or async function execution failed.')
+	        waiter.on_wait_error(task, '%s' % e)
+            else:
+                waiter.post_wait(task)
         else:
             res = self.fun(task, *args, **kwargs)
         return res
